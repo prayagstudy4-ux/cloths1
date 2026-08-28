@@ -9,6 +9,7 @@
  */
 import { scryptSync, randomBytes } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
+import { PrismaLibSQL } from "@prisma/adapter-libsql";
 
 const [, , username, fullName, password] = process.argv;
 if (!username || !fullName || !password) {
@@ -24,7 +25,21 @@ function hashPassword(pwd: string): string {
   return `${salt}:${hash}`;
 }
 
-const db = new PrismaClient();
+// Uses TURSO_DATABASE_URL/TURSO_AUTH_TOKEN when set (e.g. to provision the
+// Vercel/Turso deployment directly), otherwise the local file DB.
+function makeClient(): PrismaClient {
+  const url = process.env.TURSO_DATABASE_URL;
+  if (url) {
+    const adapter = new PrismaLibSQL({
+      url,
+      authToken: process.env.TURSO_AUTH_TOKEN,
+    });
+    return new PrismaClient({ adapter });
+  }
+  return new PrismaClient();
+}
+
+const db = makeClient();
 try {
   const existing = await db.user.findUnique({ where: { username: username.toLowerCase() } });
   if (existing) throw new Error(`User "${username}" already exists.`);

@@ -1,6 +1,7 @@
 import { Ctx, json } from "@/lib/server/router"
 import { db } from "@/lib/db"
 import { AppError, audit, optStr, optNum } from "@/lib/server/helpers"
+import { assertDisk } from "@/lib/server/storage"
 import fs from "fs"
 import path from "path"
 import { randomUUID } from "crypto"
@@ -70,6 +71,7 @@ export async function handle(ctx: Ctx) {
   // Logo upload (multipart)
   if (ctx.method === "POST" && action === "logo") {
     ctx.requirePerm("business", "edit")
+    assertDisk("Logo upload")
     const fd = ctx.body as FormData
     const file = fd?.get("file") as File | null
     if (!file) throw new AppError("No file provided")

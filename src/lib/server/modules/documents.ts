@@ -1,6 +1,7 @@
 import { Ctx, json } from "@/lib/server/router"
 import { db } from "@/lib/db"
 import { AppError, audit, optStr } from "@/lib/server/helpers"
+import { assertDisk } from "@/lib/server/storage"
 import fs from "fs"
 import path from "path"
 import { randomUUID } from "crypto"
@@ -24,6 +25,7 @@ export async function handle(ctx: Ctx) {
   // Upload (multipart)
   if (ctx.method === "POST" && (!action || action === "upload")) {
     ctx.requirePerm("documents", "create")
+    assertDisk("Document upload")
     const fd = ctx.body as FormData
     const files = fd?.getAll("files") as File[] | null
     if (!files || !files.length) throw new AppError("No files provided")

@@ -1,6 +1,7 @@
 import { Ctx, json } from "@/lib/server/router"
 import { db } from "@/lib/db"
 import { audit, setSetting, getSettings } from "@/lib/server/helpers"
+import { assertDisk, isServerless } from "@/lib/server/storage"
 
 import fs from "fs"
 import path from "path"
@@ -39,6 +40,7 @@ export async function handle(ctx: Ctx) {
   // Backup now (SQLite VACUUM INTO — safe online backup)
   if (ctx.method === "POST" && (action === "create" || !action)) {
     ctx.requirePerm("backup", "view")
+    assertDisk("Database backup")
     fs.mkdirSync(BACKUP_DIR, { recursive: true })
     const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)
     const filename = `backup-${stamp}.db`
@@ -61,6 +63,7 @@ export async function handle(ctx: Ctx) {
   // Restore
   if (ctx.method === "POST" && action === "restore") {
     ctx.requirePerm("backup", "approve")
+    assertDisk("Backup restore")
     const filename = ctx.body?.filename
     if (!filename || !filename.endsWith(".db") || filename.includes("..")) {
       return json({ error: "Invalid backup file" }, 400)
@@ -82,6 +85,7 @@ export async function handle(ctx: Ctx) {
 
   // Auto-backup check (called on app boot)
   if (ctx.method === "POST" && action === "auto-check") {
+    if (isServerless()) return json({ ok: true, skipped: true })
     const settings = await getSettings()
     if (settings.auto_backup === "0") return json({ ok: true, skipped: true })
     const backups = listBackups()
