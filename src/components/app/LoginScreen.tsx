@@ -49,7 +49,7 @@ export function LoginScreen({
             <div className="relative">
               <User className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                id="username" value={username} autoFocus
+                id="username" value={username} autoFocus autoComplete="username"
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="Enter username" className="pl-8 h-10"
               />
@@ -62,7 +62,7 @@ export function LoginScreen({
               <Input
                 id="password" type="password" value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter password" className="pl-8 h-10"
+                placeholder="Enter password" className="pl-8 h-10" autoComplete="current-password"
               />
             </div>
           </div>

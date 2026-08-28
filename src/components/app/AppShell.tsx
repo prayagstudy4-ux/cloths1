@@ -56,7 +56,7 @@ const MODULES: Record<string, React.LazyExoticComponent<React.ComponentType>> = 
 }
 
 export function AppShell() {
-  const { activeModule, setActiveModule, sidebarCollapsed, toggleSidebar, notificationsOpen, setNotificationsOpen } = useApp()
+    const { activeModule, setActiveModule, sidebarCollapsed, toggleSidebar, notificationsOpen, setNotificationsOpen } = useApp()
   const ActiveModule = MODULES[activeModule] ?? DashboardModule
 
   // Keyboard shortcuts
@@ -66,7 +66,7 @@ export function AppShell() {
       const typing = tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.isContentEditable
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault()
-        setCommandOpen(true)
+        useApp.getState().setCommandOpen(true)
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
         e.preventDefault()

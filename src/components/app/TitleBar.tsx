@@ -217,11 +217,11 @@ function ChangePasswordDialog() {
         <div className="space-y-3">
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">Current password</label>
-            <input type="password" className="w-full rounded-md border bg-transparent px-3 py-2 text-sm" value={current} onChange={(e) => setCurrent(e.target.value)} />
+            <input type="password" className="w-full rounded-md border bg-transparent px-3 py-2 text-sm" value={current} onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" />
           </div>
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">New password</label>
-            <input type="password" className="w-full rounded-md border bg-transparent px-3 py-2 text-sm" value={next} onChange={(e) => setNext(e.target.value)} />
+            <input type="password" className="w-full rounded-md border bg-transparent px-3 py-2 text-sm" value={next} onChange={(e) => setNext(e.target.value)} autoComplete="new-password" />
           </div>
         </div>
         <DialogFooter>
