@@ -12,6 +12,10 @@ function buildUpiUrl(upiId: string, payee: string, amount: number, note: string)
   return `upi://pay?${params.toString()}`
 }
 
+// PERF: throttle Razorpay reconciliation checks while the UI polls QR status
+// (at most one provider call per QR per 5 seconds).
+const rzpPollThrottle = new Map<string, number>()
+
 /**
  * Marks a QR payment as VERIFIED and records the payment in the books.
  * Shared by staff confirmation (manual) and the Razorpay webhook (automatic).
@@ -35,7 +39,7 @@ export async function verifyQrPayment(
       transactionId: opts.transactionId ?? null,
       notes: `UPI QR payment ${qr.code}${qr.note ? ` (${qr.note})` : ""}`,
       qrPaymentId: qr.id,
-      user: { id: "system", username: "system", fullName: opts.verifiedBy, role: "OWNER" },
+      user: { fullName: opts.verifiedBy, role: "OWNER" },
     })
     await tx.qRPayment.update({
       where: { id: qr.id },
@@ -197,20 +201,39 @@ export async function handle(ctx: Ctx) {
     const b = ctx.body ?? {}
     const amount = optNum(b.amount, 0)
     if (amount <= 0) throw new AppError("Amount must be greater than zero")
-    const business = await db.businessProfile.findFirst()
+
+    // PERF: fetch business + razorpay config in parallel (2 round trips → 1),
+    // and use the cached config when possible.
+    const [business, rzp] = await Promise.all([
+      db.businessProfile.findFirst(),
+      getRazorpayConfig(),
+    ])
     if (!business?.upiId) throw new AppError("UPI ID is not configured. Set it in Settings → Payments & QR (or Business Profile).")
 
-    const qr = await db.$transaction(async (tx) => {
-      const count = await tx.counter.upsert({ where: { key: "QRP" }, update: { value: { increment: 1 } }, create: { key: "QRP", value: 1 } })
-      const code = `QRP-${String(count.value).padStart(4, "0")}`
-      let sale: { id: string; invoiceNumber: string; customerId: string | null } | null = null
-      if (b.saleId) {
-        sale = await tx.sale.findUnique({ where: { id: b.saleId } })
-        if (!sale) throw new AppError("Invoice not found", 404)
+    // Counter increment needs its own tiny transaction (1 round trip)
+    const count = await db.counter.upsert({ where: { key: "QRP" }, update: { value: { increment: 1 } }, create: { key: "QRP", value: 1 } })
+    const code = `QRP-${String(count.value).padStart(4, "0")}`
+    const sale = b.saleId
+      ? await db.sale.findUnique({ where: { id: b.saleId }, select: { id: true, invoiceNumber: true, customerId: true } })
+      : null
+    if (b.saleId && !sale) throw new AppError("Invoice not found", 404)
+    const note = optStr(b.note, 50) ?? (sale ? `${business.invoicePrefix} payment ${sale.invoiceNumber}` : `Payment ${code}`)
+    const upiId = business.upiId as string
+
+    // PERF: the Razorpay API call happens OUTSIDE any transaction so the slow
+    // network hop never holds a DB transaction open.
+    let rqr: { qrId: string; imageUrl: string; upiUrl: string | null } | null = null
+    if (rzp) {
+      try {
+        rqr = await createRazorpayQr(rzp, { code, amount, note })
+      } catch (e) {
+        // Fall back to plain UPI QR if Razorpay API fails — never block a sale.
+        console.error("Razorpay QR creation failed, falling back to UPI intent:", (e as Error).message)
       }
-      const note = optStr(b.note, 50) ?? (sale ? `${business.invoicePrefix} payment ${sale.invoiceNumber}` : `Payment ${code}`)
-      const upiId = business.upiId as string
-      const rzp = await getRazorpayConfig()
+    }
+
+    // Single short transaction: insert the row + audit log together (1 round trip)
+    const qr = await db.$transaction(async (tx) => {
       const created = await tx.qRPayment.create({
         data: {
           code, amount,
@@ -219,29 +242,23 @@ export async function handle(ctx: Ctx) {
           saleId: sale?.id ?? null,
           customerId: optStr(b.customerId) ?? sale?.customerId ?? null,
           status: "PENDING",
-          provider: rzp ? "RAZORPAY" : "UPI_QR",
+          provider: rqr ? "RAZORPAY" : "UPI_QR",
+          razorpayQrId: rqr?.qrId ?? null,
           expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         },
       })
-      if (rzp) {
-        // Automatic verification path: Razorpay QR. Payment.captured webhook
-        // (or reconciliation on poll) marks it VERIFIED — no staff action needed.
-        try {
-          const rqr = await createRazorpayQr(rzp, { code, amount, note })
-          await tx.qRPayment.update({ where: { id: created.id }, data: { razorpayQrId: rqr.qrId } })
-          return { ...created, razorpayQrId: rqr.qrId, provider: "RAZORPAY", upiUrl: rqr.upiUrl, qrImageUrl: rqr.imageUrl, qrDataUrl: null }
-        } catch (e) {
-          // Fall back to plain UPI QR if Razorpay API fails — never block a sale.
-          console.error("Razorpay QR creation failed, falling back to UPI intent:", (e as Error).message)
-          await tx.qRPayment.update({ where: { id: created.id }, data: { provider: "UPI_QR" } })
-        }
-      }
-      const upiUrl = buildUpiUrl(upiId, business.upiPayeeName ?? business.name, amount, note)
-      const qrDataUrl = await QRCode.toDataURL(upiUrl, { width: 512, margin: 1 })
-      return { ...created, upiUrl, qrDataUrl }
-    }, { timeout: 60000, maxWait: 20000 })
-    await db.$transaction(async (tx) => audit(tx, ctx.user, "payments", "CREATE", qr.id, { type: "qr_intent", code: qr.code, amount: qr.amount }))
-    return json({ qr })
+      await audit(tx, ctx.user, "payments", "CREATE", created.id, { type: "qr_intent", code, amount })
+      return created
+    }, { timeout: 15000, maxWait: 5000 })
+
+    if (rqr) {
+      // Automatic verification path: Razorpay QR. Payment.captured webhook
+      // (or reconciliation on poll) marks it VERIFIED — no staff action needed.
+      return json({ qr: { ...qr, provider: "RAZORPAY", upiUrl: rqr.upiUrl, qrImageUrl: rqr.imageUrl, qrDataUrl: null } })
+    }
+    const upiUrl = buildUpiUrl(upiId, business.upiPayeeName ?? business.name, amount, note)
+    const qrDataUrl = await QRCode.toDataURL(upiUrl, { width: 512, margin: 1 })
+    return json({ qr: { ...qr, upiUrl, qrDataUrl } })
   }
 
   // QR status (polled by UI)
@@ -249,17 +266,23 @@ export async function handle(ctx: Ctx) {
     const qr = await db.qRPayment.findUnique({ where: { id }, include: { sale: true, customer: true } })
     if (!qr) throw new AppError("QR payment not found", 404)
     // Razorpay reconciliation: if the webhook was missed, check the provider
-    // directly while the UI polls, and auto-verify on a captured payment.
+    // directly while the UI polls. PERF: throttled to at most one Razorpay call
+    // per QR per 5s — polling stays instant and the API isn't hammered.
     if (qr.provider === "RAZORPAY" && qr.status === "PENDING" && qr.razorpayQrId) {
-      const rzp = await getRazorpayConfig()
-      if (rzp) {
-        const pays = await listQrPayments(rzp, qr.razorpayQrId)
-        const captured = pays.find((p) => p.status === "captured" || p.status === "authorized")
-        if (captured) {
-          await verifyQrPayment(qr.id, { transactionId: captured.id, verifiedBy: "Razorpay (auto)" })
-          const fresh = await db.qRPayment.findUnique({ where: { id: qr.id }, include: { sale: true, customer: true } })
-          const payment = fresh?.paymentId ? await db.payment.findUnique({ where: { id: fresh.paymentId } }) : null
-          return json({ qr: { ...fresh, payment } })
+      const now = Date.now()
+      const last = rzpPollThrottle.get(id) ?? 0
+      if (now - last > 5000) {
+        rzpPollThrottle.set(id, now)
+        const rzp = await getRazorpayConfig()
+        if (rzp) {
+          const pays = await listQrPayments(rzp, qr.razorpayQrId)
+          const captured = pays.find((p) => p.status === "captured" || p.status === "authorized")
+          if (captured) {
+            await verifyQrPayment(qr.id, { transactionId: captured.id, verifiedBy: "Razorpay (auto)" })
+            const fresh = await db.qRPayment.findUnique({ where: { id: qr.id }, include: { sale: true, customer: true } })
+            const payment = fresh?.paymentId ? await db.payment.findUnique({ where: { id: fresh.paymentId } }) : null
+            return json({ qr: { ...fresh, payment } })
+          }
         }
       }
     }

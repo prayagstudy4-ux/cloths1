@@ -1,6 +1,7 @@
 import { Ctx, json } from "@/lib/server/router"
 import { db } from "@/lib/db"
 import { getSettings, setSetting, audit } from "@/lib/server/helpers"
+import { clearRazorpayConfigCache } from "@/lib/server/razorpay"
 
 const SETTING_KEYS = [
   "auto_backup", "backup_retention_days", "session_timeout_hours", "require_login",
@@ -42,6 +43,7 @@ export async function handle(ctx: Ctx) {
       changed.push(k)
     }
     await db.$transaction(async (tx) => audit(tx, ctx.user, "settings", "UPDATE", null, { changed }))
+    if (changed.some((k) => k.startsWith("razorpay_"))) clearRazorpayConfigCache()
     return json({ ok: true, changed })
   }
 
