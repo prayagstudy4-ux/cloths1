@@ -22,6 +22,20 @@ function SheetClose({
   return <SheetPrimitive.Close data-slot="sheet-close" {...props} />
 }
 
+function hasDataSlot(children: React.ReactNode, slot: string): boolean {
+  let found = false
+  React.Children.forEach(children, (child) => {
+    if (found || !React.isValidElement(child)) return
+    const el = child as React.ReactElement<{ "data-slot"?: string; children?: React.ReactNode }>
+    if (el.props?.["data-slot"] === slot) {
+      found = true
+      return
+    }
+    if (el.props?.children) found = found || hasDataSlot(el.props.children, slot)
+  })
+  return found
+}
+
 function SheetPortal({
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Portal>) {
@@ -52,6 +66,12 @@ function SheetContent({
 }: React.ComponentProps<typeof SheetPrimitive.Content> & {
   side?: "top" | "right" | "bottom" | "left"
 }) {
+  const hasTitle =
+    hasDataSlot(children, "sheet-title") ||
+    React.Children.toArray(children).some((c) => React.isValidElement(c) && (c as React.ReactElement).type === SheetPrimitive.Title)
+  const hasDescription =
+    hasDataSlot(children, "sheet-description") ||
+    React.Children.toArray(children).some((c) => React.isValidElement(c) && (c as React.ReactElement).type === SheetPrimitive.Description)
   return (
     <SheetPortal>
       <SheetOverlay />
@@ -69,8 +89,12 @@ function SheetContent({
             "data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom inset-x-0 bottom-0 h-auto border-t",
           className
         )}
+        {...(hasDescription ? {} : { "aria-describedby": undefined })}
         {...props}
       >
+        {!hasTitle && (
+          <SheetPrimitive.Title className="sr-only">Sheet</SheetPrimitive.Title>
+        )}
         {children}
         <SheetPrimitive.Close className="ring-offset-background focus:ring-ring data-[state=open]:bg-secondary absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none">
           <XIcon className="size-4" />

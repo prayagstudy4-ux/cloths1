@@ -118,7 +118,12 @@ function MobileNav() {
   return (
     <Drawer open={open} onOpenChange={setOpen}>
       <DrawerTrigger asChild>
-        <Button variant="secondary" size="icon" className="fixed bottom-3 left-3 z-40 h-11 w-11 rounded-full shadow-lg md:hidden">
+        <Button
+          variant="secondary"
+          size="icon"
+          className="fixed bottom-3 left-3 z-40 h-11 w-11 rounded-full shadow-lg md:hidden"
+          onClick={(e) => (e.currentTarget as HTMLButtonElement).blur()}
+        >
           <Menu className="h-5 w-5" />
         </Button>
       </DrawerTrigger>

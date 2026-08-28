@@ -30,6 +30,20 @@ function DialogClose({
   return <DialogPrimitive.Close data-slot="dialog-close" {...props} />
 }
 
+function hasDataSlot(children: React.ReactNode, slot: string): boolean {
+  let found = false
+  React.Children.forEach(children, (child) => {
+    if (found || !React.isValidElement(child)) return
+    const el = child as React.ReactElement<{ "data-slot"?: string; children?: React.ReactNode }>
+    if (el.props?.["data-slot"] === slot) {
+      found = true
+      return
+    }
+    if (el.props?.children) found = found || hasDataSlot(el.props.children, slot)
+  })
+  return found
+}
+
 function DialogOverlay({
   className,
   ...props
@@ -54,6 +68,12 @@ function DialogContent({
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
 }) {
+  const hasTitle =
+    hasDataSlot(children, "dialog-title") ||
+    React.Children.toArray(children).some((c) => React.isValidElement(c) && (c as React.ReactElement).type === DialogPrimitive.Title)
+  const hasDescription =
+    hasDataSlot(children, "dialog-description") ||
+    React.Children.toArray(children).some((c) => React.isValidElement(c) && (c as React.ReactElement).type === DialogPrimitive.Description)
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay />
@@ -63,8 +83,12 @@ function DialogContent({
           "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 sm:max-w-lg",
           className
         )}
+        {...(hasDescription ? {} : { "aria-describedby": undefined })}
         {...props}
       >
+        {!hasTitle && (
+          <DialogPrimitive.Title className="sr-only">Dialog</DialogPrimitive.Title>
+        )}
         {children}
         {showCloseButton && (
           <DialogPrimitive.Close
