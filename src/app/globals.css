@@ -129,6 +129,19 @@
 .thin-scrollbar::-webkit-scrollbar-thumb:hover { background: oklch(0.65 0.01 250 / 0.7); }
 .dark .thin-scrollbar::-webkit-scrollbar-thumb { background: oklch(0.4 0.01 250 / 0.6); }
 
+/* ===== Mobile / touch friendliness ===== */
+/* iOS Safari auto-zooms the viewport when a text <input>/<textarea>/<select>
+   has a computed font-size below 16px. Force a readable 16px floor on form
+   controls for narrow (touch) viewports so focusing a field never janks the
+   layout; desktop sizes (md:*) take over above the tablet breakpoint. */
+@media (max-width: 767.98px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
 /* ===== Print system: invoices / reports ===== */
 @media print {
   body * { visibility: hidden; }

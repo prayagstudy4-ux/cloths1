@@ -56,7 +56,7 @@ const MODULES: Record<string, React.LazyExoticComponent<React.ComponentType>> = 
 }
 
 export function AppShell() {
-  const { activeModule, setCommandOpen, toggleSidebar, notificationsOpen, setNotificationsOpen } = useApp()
+  const { activeModule, setActiveModule, sidebarCollapsed, toggleSidebar, notificationsOpen, setNotificationsOpen } = useApp()
   const ActiveModule = MODULES[activeModule] ?? DashboardModule
 
   // Keyboard shortcuts
@@ -95,7 +95,8 @@ export function AppShell() {
           <Sidebar />
         </div>
         <main className="min-w-0 flex-1 overflow-y-auto thin-scrollbar">
-          <div className="mx-auto max-w-[1500px] p-4 md:p-6">
+          {/* extra bottom padding on mobile clears the floating nav button */}
+          <div className="mx-auto max-w-[1500px] p-4 pb-16 md:p-6 md:pb-6">
             <Suspense fallback={<ModuleLoading />}>
               <ActiveModule />
             </Suspense>
@@ -134,7 +135,7 @@ function MobileNav() {
                       key={item.id}
                       onClick={() => { setActiveModule(item.id); setOpen(false) }}
                       className={cn(
-                        "flex items-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium",
+                        "flex items-center gap-2 rounded-md px-3 py-3 text-sm font-medium",
                         activeModule === item.id ? "bg-primary text-primary-foreground" : "hover:bg-accent",
                       )}
                     >

@@ -51,12 +51,19 @@ export function NotificationsPanel() {
           {notifications.map((n: any) => (
             <div
               key={n.id}
-              className={cn("group flex gap-3 border-b px-4 py-3", !n.read && "bg-primary/5")}
+              className={cn(
+                "group flex gap-3 border-b px-4 py-3",
+                !n.read && "bg-primary/5",
+              )}
             >
               <span
                 className={cn(
                   "mt-1 h-2 w-2 shrink-0 rounded-full",
-                  n.severity === "CRITICAL" ? "bg-red-500" : n.severity === "WARNING" ? "bg-amber-500" : "bg-primary",
+                  n.severity === "CRITICAL"
+                    ? "bg-red-500"
+                    : n.severity === "WARNING"
+                      ? "bg-amber-500"
+                      : "bg-primary",
                 )}
               />
               <div className="min-w-0 flex-1">
@@ -64,14 +71,17 @@ export function NotificationsPanel() {
                 <p className="mt-0.5 text-xs text-muted-foreground">{n.message}</p>
                 <p className="mt-1 text-[10px] text-muted-foreground">{fmtDateTimeIST(n.createdAt)}</p>
               </div>
-              <div className="flex flex-col gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+              {/* On touch devices hover doesn't work, so the action buttons are
+                  always visible below the `md` breakpoint and fade in on hover
+                  on desktop. Tap targets are enlarged for touch. */}
+              <div className="flex flex-col gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100">
                 {!n.read && (
-                  <button onClick={() => markOne(n.id)} title="Mark read" className="rounded p-1 hover:bg-accent">
-                    <CheckCheck className="h-3.5 w-3.5" />
+                  <button onClick={() => markOne(n.id)} title="Mark read" className="rounded p-2 hover:bg-accent md:p-1">
+                    <CheckCheck className="h-4 w-4 md:h-3.5 md:w-3.5" />
                   </button>
                 )}
-                <button onClick={() => remove(n.id)} title="Delete" className="rounded p-1 hover:bg-accent">
-                  <Trash2 className="h-3.5 w-3.5" />
+                <button onClick={() => remove(n.id)} title="Delete" className="rounded p-2 hover:bg-accent md:p-1">
+                  <Trash2 className="h-4 w-4 md:h-3.5 md:w-3.5" />
                 </button>
               </div>
             </div>

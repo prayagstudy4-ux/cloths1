@@ -3,14 +3,17 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { api } from "@/lib/client/api"
 import { useApp } from "@/lib/client/store"
-import { APP_NAME, APP_VERSION } from "@/lib/constants"
+import { APP_NAME } from "@/lib/constants"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
   DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Bell, CircleUser, LogOut, Minus, Moon, Search, ShieldCheck, Square, Sun, X, KeyRound } from "lucide-react"
+import {
+  Bell, CircleUser, LogOut, Minus, Moon, Search, ShieldCheck, Square, Sun, X,
+  KeyRound,
+} from "lucide-react"
 import { useTheme } from "next-themes"
 import { useState } from "react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
@@ -54,7 +57,14 @@ export function TitleBar({ onExit }: { onExit: () => void }) {
           )}
         </div>
 
-        {/* Global search trigger */}
+        {/* Search — compact icon button on mobile, full bar on desktop */}
+        <button
+          onClick={() => setCommandOpen(true)}
+          className="flex h-11 w-11 items-center justify-center rounded-md hover:bg-zinc-800 md:hidden"
+          title="Search"
+        >
+          <Search className="h-5 w-5" />
+        </button>
         <button
           onClick={() => setCommandOpen(true)}
           className="mx-auto hidden h-7 w-full max-w-md items-center gap-2 rounded-md border border-zinc-700 bg-zinc-800 px-3 text-left text-xs text-zinc-400 hover:border-zinc-500 hover:bg-zinc-750 md:flex"
@@ -72,7 +82,7 @@ export function TitleBar({ onExit }: { onExit: () => void }) {
           {/* Notifications */}
           <button
             onClick={() => setNotificationsOpen(true)}
-            className="relative flex h-8 w-8 items-center justify-center rounded-md hover:bg-zinc-800"
+            className="relative flex h-11 w-11 items-center justify-center rounded-md hover:bg-zinc-800 lg:h-8 lg:w-8"
             title="Notifications"
           >
             <Bell className="h-4 w-4" />
@@ -86,7 +96,7 @@ export function TitleBar({ onExit }: { onExit: () => void }) {
           {/* Theme */}
           <button
             onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-            className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-zinc-800"
+            className="flex h-11 w-11 items-center justify-center rounded-md hover:bg-zinc-800 lg:h-8 lg:w-8"
             title="Toggle theme"
           >
             {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
@@ -95,7 +105,7 @@ export function TitleBar({ onExit }: { onExit: () => void }) {
           {/* User menu */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button className="flex h-8 items-center gap-2 rounded-md px-2 hover:bg-zinc-800">
+              <button className="flex h-11 items-center gap-2 rounded-md px-2 hover:bg-zinc-800 lg:h-8">
                 <CircleUser className="h-4 w-4" />
                 <span className="hidden text-xs font-medium sm:inline">{user?.fullName}</span>
                 <Badge variant="outline" className="hidden border-zinc-600 bg-zinc-800 text-[9px] text-zinc-300 lg:inline-flex">
@@ -122,17 +132,19 @@ export function TitleBar({ onExit }: { onExit: () => void }) {
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {/* Window controls (Windows-style) */}
-          <div className="ml-2 flex items-center">
+          {/* Window controls — hidden on mobile (sidebar collapse & fullscreen are
+              desktop concepts; on mobile use the bottom MobileNav). Users can
+              still sign out from the user menu above. */}
+          <div className="ml-2 hidden items-center gap-1 md:flex">
             <button
-              className="flex h-8 w-9 items-center justify-center rounded hover:bg-zinc-800"
+              className="flex h-11 w-11 items-center justify-center rounded hover:bg-zinc-800 lg:h-8 lg:w-9"
               onClick={() => useApp.getState().toggleSidebar()}
               title="Minimize (collapse sidebar)"
             >
               <Minus className="h-3.5 w-3.5" />
             </button>
             <button
-              className="flex h-8 w-9 items-center justify-center rounded hover:bg-zinc-800"
+              className="flex h-11 w-11 items-center justify-center rounded hover:bg-zinc-800 lg:h-8 lg:w-9"
               onClick={() => {
                 if (document.fullscreenElement) document.exitFullscreen()
                 else document.documentElement.requestFullscreen().catch(() => { })
@@ -142,7 +154,7 @@ export function TitleBar({ onExit }: { onExit: () => void }) {
               <Square className="h-3 w-3" />
             </button>
             <button
-              className="flex h-8 w-9 items-center justify-center rounded hover:bg-red-600 hover:text-white"
+              className="flex h-11 w-11 items-center justify-center rounded hover:bg-red-600 hover:text-white lg:h-8 lg:w-9"
               onClick={() => setShowExit(true)}
               title="Close / Sign out"
             >

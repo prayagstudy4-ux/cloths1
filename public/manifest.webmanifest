@@ -1,0 +1,31 @@
+{
+  "name": "Clothing Business Manager",
+  "short_name": "CBM",
+  "description": "Complete business management system for clothing brands — inventory, sales, purchases, payments, production, accounts and reports. Works fully offline with a local SQLite database.",
+  "start_url": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay"],
+  "orientation": "portrait-primary",
+  "theme_color": "#0f766e",
+  "background_color": "#ffffff",
+  "icons": [
+    {
+      "src": "/logo-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
