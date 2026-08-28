@@ -1,0 +1,1310 @@
+     1→"use client"
+     2→
+     3→import { useEffect, useMemo, useState } from "react"
+     4→import { useQuery, useQueryClient } from "@tanstack/react-query"
+     5→import { api, qs } from "@/lib/client/api"
+     6→import { canDo, useApp } from "@/lib/client/store"
+     7→import { PageHeader, StatCard, EmptyState } from "@/components/shared/basics"
+     8→import { DataTable, exportCSV, Column } from "@/components/shared/DataTable"
+     9→import { StatusBadge, Money, DateCell, ConfirmDialog, Field, TextInput, SelectInput, TextArea, NumberInput } from "@/components/shared/fields"
+    10→import { Button } from "@/components/ui/button"
+    11→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+    12→import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+    13→import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+    14→import { Input } from "@/components/ui/input"
+    15→import { cn } from "@/lib/utils"
+    16→import { fmtMoney, fmtDateIST, ymdIST } from "@/lib/format"
+    17→import {
+    18→  ATTENDANCE_STATUSES, ATTENDANCE_STATUS_LABELS,
+    19→  PAYMENT_METHODS, PAYMENT_METHOD_LABELS,
+    20→  SALARY_PAYMENT_TYPES, SALARY_PAYMENT_TYPE_LABELS,
+    21→  TASK_PRIORITIES, TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS,
+    22→  TASK_STATUSES, TASK_STATUS_LABELS,
+    23→} from "@/lib/constants"
+    24→import { toast } from "@/hooks/use-toast"
+    25→import {
+    26→  IdCard, Users, UserCheck, UserX, UserPlus, IndianRupee, CalendarCheck, CalendarDays, CalendarClock,
+    27→  ListTodo, Pencil, Trash2, Loader2, Play, CheckCircle2, RotateCcw, Download, Phone, MapPin,
+    28→  Briefcase, Wallet, CheckCheck, AlertTriangle,
+    29→} from "lucide-react"
+    30→
+    31→// ==================== Types ====================
+    32→interface Employee {
+    33→  id: string; code: string; name: string; phone: string | null
+    34→  designation: string | null; joiningDate: string | null; salary: number
+    35→  status: string; address: string | null; notes: string | null; createdAt: string
+    36→  todayAttendance?: string | null
+    37→}
+    38→
+    39→interface AttendanceRecord {
+    40→  id: string; employeeId: string; date: string; status: string; note: string | null
+    41→}
+    42→
+    43→interface SalaryPayment {
+    44→  id: string; employeeId: string; type: string; month: string | null
+    45→  amount: number; method: string; date: string; notes: string | null; createdAt: string
+    46→}
+    47→
+    48→interface Task {
+    49→  id: string; title: string; description: string | null; assignedTo: string | null
+    50→  priority: string; dueDate: string | null; status: string
+    51→  createdByName: string | null; createdAt: string; completedAt: string | null
+    52→}
+    53→
+    54→// ==================== Local style maps ====================
+    55→const ATTENDANCE_BADGE_COLORS: Record<string, string> = {
+    56→  PRESENT: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
+    57→  ABSENT: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300",
+    58→  HALF_DAY: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
+    59→  LEAVE: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300",
+    60→}
+    61→
+    62→const ATTENDANCE_DOT_COLORS: Record<string, string> = {
+    63→  PRESENT: "bg-emerald-500",
+    64→  ABSENT: "bg-red-500",
+    65→  HALF_DAY: "bg-amber-500",
+    66→  LEAVE: "bg-sky-500",
+    67→}
+    68→
+    69→const SALARY_TYPE_BADGE_COLORS: Record<string, string> = {
+    70→  SALARY: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
+    71→  ADVANCE: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
+    72→  BONUS: "bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300",
+    73→  DEDUCTION: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300",
+    74→}
+    75→
+    76→const TASK_STATUS_BADGE_COLORS: Record<string, string> = {
+    77→  PENDING: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
+    78→  IN_PROGRESS: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
+    79→  COMPLETED: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
+    80→  CANCELLED: "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400",
+    81→}
+    82→
+    83→// ==================== Helpers ====================
+    84→/** Current IST month as YYYY-MM, offset by n months */
+    85→function ymIST(offsetMonths = 0): string {
+    86→  const [y, m] = ymdIST().split("-").map(Number)
+    87→  let year = y, month = m + offsetMonths
+    88→  while (month < 1) { month += 12; year -= 1 }
+    89→  while (month > 12) { month -= 12; year += 1 }
+    90→  return `${year}-${String(month).padStart(2, "0")}`
+    91→}
+    92→
+    93→function isTaskOverdue(t: Task): boolean {
+    94→  if (!t.dueDate || t.status === "COMPLETED" || t.status === "CANCELLED") return false
+    95→  return fmtDateIST(t.dueDate, "yyyy-MM-dd") < ymdIST()
+    96→}
+    97→
+    98→// ==================== MAIN MODULE ====================
+    99→export function StaffModule() {
+   100→  const { moduleParams } = useApp()
+   101→  const initialTab =
+   102→    moduleParams?.tab === "attendance" || moduleParams?.tab === "tasks" ? String(moduleParams.tab) : "employees"
+   103→  const [tab, setTab] = useState(initialTab)
+   104→  const [detailId, setDetailId] = useState<string | null>(
+   105→    initialTab === "employees" ? ((moduleParams?.entityId as string) ?? null) : null,
+   106→  )
+   107→  const [creatingEmployee, setCreatingEmployee] = useState<boolean>(!!moduleParams?.new && initialTab === "employees")
+   108→  const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null)
+   109→
+   110→  const { data: staffData, isLoading: staffLoading } = useQuery({
+   111→    queryKey: ["staff"],
+   112→    queryFn: () => api.get("staff"),
+   113→  })
+   114→
+   115→  const employees: Employee[] = staffData?.employees ?? []
+   116→  const activeEmployees = useMemo(() => employees.filter((e) => e.status === "ACTIVE"), [employees])
+   117→  const monthlySalaryCost = activeEmployees.reduce((s, e) => s + (e.salary ?? 0), 0)
+   118→  const presentToday = activeEmployees.filter((e) => e.todayAttendance === "PRESENT").length
+   119→  const markedToday = activeEmployees.filter((e) => e.todayAttendance).length
+   120→  const detailEmployee = detailId ? (employees.find((e) => e.id === detailId) ?? null) : null
+   121→
+   122→  function exportStaffCsv() {
+   123→    exportCSV(
+   124→      "employees",
+   125→      ["Code", "Name", "Designation", "Phone", "Joined", "Salary", "Status", "Today"],
+   126→      employees.map((e) => [
+   127→        e.code, e.name, e.designation ?? "", e.phone ?? "",
+   128→        e.joiningDate ? fmtDateIST(e.joiningDate) : "", e.salary, e.status,
+   129→        e.todayAttendance ? (ATTENDANCE_STATUS_LABELS[e.todayAttendance] ?? e.todayAttendance) : "Not Marked",
+   130→      ]),
+   131→    )
+   132→  }
+   133→
+   134→  const columns: Column<Employee>[] = [
+   135→    { key: "code", header: "Code", width: "w-16", render: (e) => <span className="text-xs text-muted-foreground">{e.code}</span> },
+   136→    {
+   137→      key: "name", header: "Employee", render: (e) => (
+   138→        <div className="flex items-center gap-2">
+   139→          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+   140→            {e.name?.[0]?.toUpperCase()}
+   141→          </div>
+   142→          <span className="truncate font-medium">{e.name}</span>
+   143→        </div>
+   144→      ),
+   145→    },
+   146→    { key: "designation", header: "Designation", render: (e) => <span className="text-muted-foreground">{e.designation ?? "—"}</span> },
+   147→    { key: "phone", header: "Phone", render: (e) => <span className="tabular-nums">{e.phone ?? "—"}</span> },
+   148→    { key: "joiningDate", header: "Joined", sortValue: (e) => e.joiningDate ?? "", render: (e) => <DateCell value={e.joiningDate} /> },
+   149→    {
+   150→      key: "salary", header: "Salary", align: "right", sortValue: (e) => e.salary,
+   151→      render: (e) => (e.salary > 0 ? <Money value={e.salary} /> : <span className="text-muted-foreground">—</span>),
+   152→    },
+   153→    {
+   154→      key: "status", header: "Status", render: (e) => (
+   155→        <StatusBadge
+   156→          label={e.status === "ACTIVE" ? "Active" : "Inactive"}
+   157→          className={e.status === "ACTIVE"
+   158→            ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+   159→            : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"}
+   160→        />
+   161→      ),
+   162→    },
+   163→    {
+   164→      key: "todayAttendance", header: "Today", render: (e) => e.todayAttendance
+   165→        ? <StatusBadge label={ATTENDANCE_STATUS_LABELS[e.todayAttendance] ?? e.todayAttendance} className={ATTENDANCE_BADGE_COLORS[e.todayAttendance]} />
+   166→        : <span className="text-xs text-muted-foreground">—</span>,
+   167→    },
+   168→  ]
+   169→
+   170→  return (
+   171→    <div className="space-y-4">
+   172→      <PageHeader
+   173→        icon={<IdCard className="h-5 w-5" />}
+   174→        title="Staff & Workers"
+   175→        description="Employee master, daily attendance, salary & advance payouts and the shop task board."
+   176→        actions={
+   177→          tab === "employees" ? (
+   178→            <>
+   179→              <Button variant="outline" size="sm" onClick={exportStaffCsv} disabled={employees.length === 0}>
+   180→                <Download className="mr-1.5 h-4 w-4" /> Export CSV
+   181→              </Button>
+   182→              {canDo("staff", "create") && (
+   183→                <Button size="sm" onClick={() => setCreatingEmployee(true)}>
+   184→                  <UserPlus className="mr-1.5 h-4 w-4" /> New Employee
+   185→                </Button>
+   186→              )}
+   187→            </>
+   188→          ) : undefined
+   189→        }
+   190→      />
+   191→
+   192→      <Tabs value={tab} onValueChange={setTab}>
+   193→        <TabsList className="h-auto w-full flex-wrap justify-start overflow-x-auto">
+   194→          <TabsTrigger value="employees" className="px-3">Employees</TabsTrigger>
+   195→          <TabsTrigger value="attendance" className="px-3">Attendance</TabsTrigger>
+   196→          <TabsTrigger value="tasks" className="px-3">Tasks</TabsTrigger>
+   197→        </TabsList>
+   198→
+   199→        {/* ==================== TAB: EMPLOYEES ==================== */}
+   200→        <TabsContent value="employees" className="mt-4 space-y-4">
+   201→          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+   202→            <StatCard
+   203→              label="Active Staff"
+   204→              value={staffLoading ? "…" : activeEmployees.length}
+   205→              sub={`${employees.length} on payroll`}
+   206→              icon={<Users className="h-4 w-4" />}
+   207→            />
+   208→            <StatCard
+   209→              label="Present Today"
+   210→              value={staffLoading ? "…" : presentToday}
+   211→              sub={`${markedToday} of ${activeEmployees.length} marked`}
+   212→              tone="positive"
+   213→              icon={<UserCheck className="h-4 w-4" />}
+   214→            />
+   215→            <StatCard
+   216→              label="Monthly Salary Cost"
+   217→              value={fmtMoney(monthlySalaryCost)}
+   218→              sub="active payroll"
+   219→              icon={<IndianRupee className="h-4 w-4" />}
+   220→            />
+   221→            <StatCard
+   222→              label="Unmarked Today"
+   223→              value={staffLoading ? "…" : Math.max(0, activeEmployees.length - markedToday)}
+   224→              sub="attendance pending"
+   225→              tone={activeEmployees.length - markedToday > 0 ? "warning" : "default"}
+   226→              icon={<CalendarClock className="h-4 w-4" />}
+   227→            />
+   228→          </div>
+   229→
+   230→          <DataTable
+   231→            columns={columns}
+   232→            rows={employees}
+   233→            loading={staffLoading}
+   234→            searchKeys={["code", "name", "phone", "designation"]}
+   235→            searchPlaceholder="Search name, code, phone, designation…"
+   236→            onRowClick={(e) => setDetailId(e.id)}
+   237→            emptyTitle="No employees yet"
+   238→            emptyDescription="Add your first employee to start tracking attendance, salary and advances."
+   239→            emptyAction={canDo("staff", "create") ? (
+   240→              <Button size="sm" onClick={() => setCreatingEmployee(true)}>
+   241→                <UserPlus className="mr-1.5 h-4 w-4" /> New Employee
+   242→              </Button>
+   243→            ) : undefined}
+   244→            rowClassName={(e) => (e.status === "INACTIVE" ? "opacity-60" : "")}
+   245→          />
+   246→        </TabsContent>
+   247→
+   248→        {/* ==================== TAB: ATTENDANCE ==================== */}
+   249→        <TabsContent value="attendance" className="mt-4">
+   250→          <AttendanceTab employees={activeEmployees} loading={staffLoading} />
+   251→        </TabsContent>
+   252→
+   253→        {/* ==================== TAB: TASKS ==================== */}
+   254→        <TabsContent value="tasks" className="mt-4">
+   255→          <TasksTab
+   256→            employees={activeEmployees}
+   257→            focusId={initialTab === "tasks" ? ((moduleParams?.entityId as string) ?? null) : null}
+   258→            autoNew={!!moduleParams?.new && initialTab === "tasks"}
+   259→          />
+   260→        </TabsContent>
+   261→      </Tabs>
+   262→
+   263→      {creatingEmployee && <EmployeeForm onClose={() => setCreatingEmployee(false)} />}
+   264→      {editingEmployee && <EmployeeForm employee={editingEmployee} onClose={() => setEditingEmployee(null)} />}
+   265→      {detailId && (
+   266→        <EmployeeDetailSheet
+   267→          employeeId={detailId}
+   268→          employee={detailEmployee}
+   269→          notFound={!staffLoading && !detailEmployee}
+   270→          onClose={() => setDetailId(null)}
+   271→          onEdit={(e) => { setDetailId(null); setEditingEmployee(e) }}
+   272→          onMarkAttendance={() => { setDetailId(null); setTab("attendance") }}
+   273→        />
+   274→      )}
+   275→    </div>
+   276→  )
+   277→}
+   278→
+   279→// ==================== EMPLOYEE FORM (create / edit) ====================
+   280→function EmployeeForm({ employee, onClose }: { employee?: Employee; onClose: () => void }) {
+   281→  const qc = useQueryClient()
+   282→  const [saving, setSaving] = useState(false)
+   283→  const [form, setForm] = useState({
+   284→    name: employee?.name ?? "",
+   285→    phone: employee?.phone ?? "",
+   286→    designation: employee?.designation ?? "",
+   287→    joiningDate: employee?.joiningDate ? fmtDateIST(employee.joiningDate, "yyyy-MM-dd") : ymdIST(),
+   288→    salary: employee?.salary ?? 0,
+   289→    address: employee?.address ?? "",
+   290→    notes: employee?.notes ?? "",
+   291→  })
+   292→
+   293→  async function save() {
+   294→    if (!form.name.trim()) return toast({ title: "Name is required", variant: "destructive" })
+   295→    setSaving(true)
+   296→    try {
+   297→      const payload = {
+   298→        name: form.name.trim(),
+   299→        phone: form.phone.trim(),
+   300→        designation: form.designation.trim(),
+   301→        joiningDate: form.joiningDate || undefined,
+   302→        salary: form.salary,
+   303→        address: form.address.trim(),
+   304→        notes: form.notes.trim(),
+   305→      }
+   306→      if (employee) await api.put(`staff/${employee.id}`, payload)
+   307→      else await api.post("staff", payload)
+   308→      toast({
+   309→        title: employee ? "Employee updated" : "Employee created",
+   310→        description: `${form.name.trim()}${form.designation.trim() ? ` · ${form.designation.trim()}` : ""}`,
+   311→      })
+   312→      qc.invalidateQueries({ queryKey: ["staff"] })
+   313→      onClose()
+   314→    } catch (e: any) {
+   315→      toast({ title: "Failed to save employee", description: e.message, variant: "destructive" })
+   316→    } finally {
+   317→      setSaving(false)
+   318→    }
+   319→  }
+   320→
+   321→  return (
+   322→    <Dialog open onOpenChange={(v) => !v && onClose()}>
+   323→      <DialogContent className="max-w-lg">
+   324→        <DialogHeader>
+   325→          <DialogTitle>{employee ? `Edit ${employee.name}` : "New Employee"}</DialogTitle>
+   326→        </DialogHeader>
+   327→        <div className="grid gap-3 sm:grid-cols-2">
+   328→          <div className="sm:col-span-2">
+   329→            <Field label="Full name" required>
+   330→              <TextInput value={form.name} onChange={(v) => setForm({ ...form, name: v })} placeholder="Employee name" autoFocus />
+   331→            </Field>
+   332→          </div>
+   333→          <Field label="Phone">
+   334→            <TextInput value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} placeholder="98XXXXXXXX" />
+   335→          </Field>
+   336→          <Field label="Designation" hint="e.g. Sales Person, Tailor, Helper">
+   337→            <TextInput value={form.designation} onChange={(v) => setForm({ ...form, designation: v })} placeholder="Designation" />
+   338→          </Field>
+   339→          <Field label="Joining date" hint={employee ? "Server keeps the original joining date for now" : undefined}>
+   340→            <TextInput type="date" value={form.joiningDate} onChange={(v) => setForm({ ...form, joiningDate: v })} />
+   341→          </Field>
+   342→          <Field label="Monthly salary (₹)">
+   343→            <NumberInput value={form.salary} onChange={(v) => setForm({ ...form, salary: v })} min={0} />
+   344→          </Field>
+   345→          <div className="sm:col-span-2">
+   346→            <Field label="Address">
+   347→              <TextInput value={form.address} onChange={(v) => setForm({ ...form, address: v })} placeholder="Street, city…" />
+   348→            </Field>
+   349→          </div>
+   350→          <div className="sm:col-span-2">
+   351→            <Field label="Notes">
+   352→              <TextArea value={form.notes} onChange={(v) => setForm({ ...form, notes: v })} rows={2} placeholder="Remarks, skills, references…" />
+   353→            </Field>
+   354→          </div>
+   355→        </div>
+   356→        <DialogFooter>
+   357→          <Button variant="outline" onClick={onClose}>Cancel</Button>
+   358→          <Button onClick={save} disabled={saving}>
+   359→            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Save
+   360→          </Button>
+   361→        </DialogFooter>
+   362→      </DialogContent>
+   363→    </Dialog>
+   364→  )
+   365→}
+   366→
+   367→// ==================== EMPLOYEE DETAIL SHEET ====================
+   368→function EmployeeDetailSheet({
+   369→  employeeId, employee, notFound, onClose, onEdit, onMarkAttendance,
+   370→}: {
+   371→  employeeId: string
+   372→  employee: Employee | null
+   373→  notFound?: boolean
+   374→  onClose: () => void
+   375→  onEdit: (e: Employee) => void
+   376→  onMarkAttendance: () => void
+   377→}) {
+   378→  const qc = useQueryClient()
+   379→  const [payOpen, setPayOpen] = useState(false)
+   380→  const [deactivateOpen, setDeactivateOpen] = useState(false)
+   381→  const [togglingStatus, setTogglingStatus] = useState(false)
+   382→
+   383→  // Salary / advance history (documented endpoint: GET staff/payments?employeeId=)
+   384→  const { data: payData, isLoading: payLoading } = useQuery({
+   385→    queryKey: ["staff", "payments", employeeId],
+   386→    queryFn: () => api.get(`staff/payments${qs({ employeeId })}`),
+   387→  })
+   388→
+   389→  // Recent attendance = current + previous month via GET staff/attendance?month=
+   390→  const curMonth = useMemo(() => ymIST(0), [])
+   391→  const prevMonth = useMemo(() => ymIST(-1), [])
+   392→  const { data: attCur } = useQuery({
+   393→    queryKey: ["staff", "attendance", "month", curMonth],
+   394→    queryFn: () => api.get(`staff/attendance${qs({ month: curMonth })}`),
+   395→  })
+   396→  const { data: attPrev } = useQuery({
+   397→    queryKey: ["staff", "attendance", "month", prevMonth],
+   398→    queryFn: () => api.get(`staff/attendance${qs({ month: prevMonth })}`),
+   399→  })
+   400→
+   401→  const attendanceRecords: AttendanceRecord[] = useMemo(() => {
+   402→    const all: AttendanceRecord[] = [...(attCur?.records ?? []), ...(attPrev?.records ?? [])]
+   403→    return all
+   404→      .filter((r) => r.employeeId === employeeId)
+   405→      .sort((a, b) => b.date.localeCompare(a.date))
+   406→      .slice(0, 60)
+   407→  }, [attCur, attPrev, employeeId])
+   408→
+   409→  const payments: SalaryPayment[] = payData?.payments ?? []
+   410→  const presentCount = attendanceRecords.filter((r) => r.status === "PRESENT").length
+   411→  const totalPaid = payments.reduce((s, p) => s + Math.max(0, p.amount), 0)
+   412→  const advanceTotal = payments.filter((p) => p.type === "ADVANCE").reduce((s, p) => s + p.amount, 0)
+   413→
+   414→  async function updateStatus(id: string, status: "ACTIVE" | "INACTIVE") {
+   415→    setTogglingStatus(true)
+   416→    try {
+   417→      await api.put(`staff/${id}`, { status })
+   418→      toast({
+   419→        title: status === "INACTIVE" ? "Employee deactivated" : "Employee reactivated",
+   420→        description: employee?.name ?? "",
+   421→      })
+   422→      qc.invalidateQueries({ queryKey: ["staff"] })
+   423→      if (status === "INACTIVE") onClose()
+   424→    } catch (e: any) {
+   425→      toast({ title: "Could not update employee", description: e.message, variant: "destructive" })
+   426→    } finally {
+   427→      setTogglingStatus(false)
+   428→      setDeactivateOpen(false)
+   429→    }
+   430→  }
+   431→
+   432→  if (!employee) {
+   433→    return (
+   434→      <Sheet open onOpenChange={(v) => !v && onClose()}>
+   435→        <SheetContent side="right" className="w-full overflow-y-auto p-0 sm:max-w-2xl thin-scrollbar">
+   436→          <SheetHeader className="border-b bg-muted/40 px-5 py-4">
+   437→            <SheetTitle>Employee</SheetTitle>
+   438→          </SheetHeader>
+   439→          <div className="flex items-center justify-center py-24">
+   440→            {notFound ? (
+   441→              <EmptyState
+   442→                title="Employee not found"
+   443→                description="This employee may have been removed. Close and refresh the list."
+   444→                action={<Button size="sm" variant="outline" onClick={onClose}>Close</Button>}
+   445→              />
+   446→            ) : (
+   447→              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+   448→            )}
+   449→          </div>
+   450→        </SheetContent>
+   451→      </Sheet>
+   452→    )
+   453→  }
+   454→
+   455→  return (
+   456→    <Sheet open onOpenChange={(v) => !v && onClose()}>
+   457→      <SheetContent side="right" className="w-full overflow-y-auto p-0 sm:max-w-2xl thin-scrollbar">
+   458→        <SheetHeader className="border-b bg-muted/40 px-5 py-4">
+   459→          <SheetTitle className="flex items-center gap-3">
+   460→            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-lg font-bold text-primary-foreground">
+   461→              {employee.name?.[0]?.toUpperCase() ?? "?"}
+   462→            </div>
+   463→            <div className="min-w-0">
+   464→              <p className="truncate text-lg font-semibold">{employee.name}</p>
+   465→              <p className="text-xs font-normal text-muted-foreground">
+   466→                {employee.code}{employee.designation ? ` · ${employee.designation}` : ""}
+   467→                {employee.status === "INACTIVE" ? " · Inactive" : ""}
+   468→              </p>
+   469→            </div>
+   470→          </SheetTitle>
+   471→        </SheetHeader>
+   472→
+   473→        <div className="space-y-5 p-5">
+   474→          {/* Stats */}
+   475→          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+   476→            <StatCard label="Monthly Salary" value={fmtMoney(employee.salary)} sub="current rate" />
+   477→            <StatCard label="Present Days" value={presentCount} sub="last 2 months" tone="positive" />
+   478→            <StatCard label="Total Paid Out" value={fmtMoney(totalPaid)} sub={`${payments.length} payments`} />
+   479→            <StatCard label="Advances" value={fmtMoney(advanceTotal)} sub="recoverable" tone={advanceTotal > 0 ? "warning" : "default"} />
+   480→          </div>
+   481→
+   482→          {/* Actions */}
+   483→          <div className="flex flex-wrap gap-2">
+   484→            <Button size="sm" variant="outline" onClick={onMarkAttendance}>
+   485→              <CalendarCheck className="mr-1.5 h-4 w-4" /> Mark Attendance
+   486→            </Button>
+   487→            {canDo("staff", "pay") && (
+   488→              <Button size="sm" onClick={() => setPayOpen(true)}>
+   489→                <Wallet className="mr-1.5 h-4 w-4" /> Pay Salary / Advance
+   490→              </Button>
+   491→            )}
+   492→            {canDo("staff", "edit") && (
+   493→              <Button size="sm" variant="outline" onClick={() => onEdit(employee)}>
+   494→                <Pencil className="mr-1.5 h-4 w-4" /> Edit
+   495→              </Button>
+   496→            )}
+   497→            {employee.status === "ACTIVE"
+   498→              ? canDo("staff", "delete") && (
+   499→                  <Button size="sm" variant="outline" className="text-destructive hover:text-destructive" onClick={() => setDeactivateOpen(true)}>
+   500→                    <UserX className="mr-1.5 h-4 w-4" /> Deactivate
+   501→                  </Button>
+   502→                )
+   503→              : canDo("staff", "edit") && (
+   504→                  <Button size="sm" variant="outline" onClick={() => updateStatus(employee.id, "ACTIVE")} disabled={togglingStatus}>
+   505→                    <UserCheck className="mr-1.5 h-4 w-4" /> Reactivate
+   506→                  </Button>
+   507→                )}
+   508→          </div>
+   509→
+   510→          {/* Info */}
+   511→          <div className="grid gap-2 rounded-lg border p-4 text-sm sm:grid-cols-2">
+   512→            <span className="flex items-center gap-2 text-muted-foreground"><Phone className="h-3.5 w-3.5 shrink-0" /> {employee.phone ?? "—"}</span>
+   513→            <span className="flex items-center gap-2 text-muted-foreground"><Briefcase className="h-3.5 w-3.5 shrink-0" /> {employee.designation ?? "—"}</span>
+   514→            <span className="flex items-center gap-2 text-muted-foreground">
+   515→              <CalendarDays className="h-3.5 w-3.5 shrink-0" /> Joined <DateCell value={employee.joiningDate} />
+   516→            </span>
+   517→            <span className="flex items-center gap-2 text-muted-foreground"><IdCard className="h-3.5 w-3.5 shrink-0" /> {employee.code}</span>
+   518→            {employee.address && (
+   519→              <span className="col-span-2 flex items-start gap-2 text-muted-foreground">
+   520→                <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {employee.address}
+   521→              </span>
+   522→            )}
+   523→            {employee.notes && <p className="col-span-2 rounded bg-muted p-2 text-xs">{employee.notes}</p>}
+   524→          </div>
+   525→
+   526→          {/* Tabs: attendance + payments */}
+   527→          <Tabs defaultValue="attendance">
+   528→            <TabsList className="w-full justify-start overflow-x-auto flex-wrap h-auto">
+   529→              <TabsTrigger value="attendance">Attendance ({attendanceRecords.length})</TabsTrigger>
+   530→              <TabsTrigger value="payments">Salary Payments ({payments.length})</TabsTrigger>
+   531→            </TabsList>
+   532→
+   533→            <TabsContent value="attendance" className="mt-3">
+   534→              {attendanceRecords.length === 0 ? (
+   535→                <EmptyState title="No attendance records" description="Attendance from the last two months will appear here." />
+   536→              ) : (
+   537→                <div className="max-h-96 overflow-y-auto rounded-lg border thin-scrollbar">
+   538→                  <table className="w-full text-sm">
+   539→                    <thead className="sticky top-0 z-10 bg-muted">
+   540→                      <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
+   541→                        <th className="px-3 py-2 font-semibold">Date</th>
+   542→                        <th className="px-3 py-2 font-semibold">Status</th>
+   543→                        <th className="px-3 py-2 font-semibold">Note</th>
+   544→                      </tr>
+   545→                    </thead>
+   546→                    <tbody>
+   547→                      {attendanceRecords.map((r) => (
+   548→                        <tr key={r.id} className="border-b last:border-0">
+   549→                          <td className="whitespace-nowrap px-3 py-2 text-xs"><DateCell value={r.date} /></td>
+   550→                          <td className="px-3 py-2">
+   551→                            <StatusBadge label={ATTENDANCE_STATUS_LABELS[r.status] ?? r.status} className={ATTENDANCE_BADGE_COLORS[r.status]} />
+   552→                          </td>
+   553→                          <td className="px-3 py-2 text-xs text-muted-foreground">{r.note ?? "—"}</td>
+   554→                        </tr>
+   555→                      ))}
+   556→                    </tbody>
+   557→                  </table>
+   558→                </div>
+   559→              )}
+   560→            </TabsContent>
+   561→
+   562→            <TabsContent value="payments" className="mt-3 space-y-3">
+   563→              {canDo("staff", "pay") && (
+   564→                <div className="flex justify-end">
+   565→                  <Button size="sm" variant="outline" onClick={() => setPayOpen(true)}>
+   566→                    <Wallet className="mr-1.5 h-4 w-4" /> New Payment
+   567→                  </Button>
+   568→                </div>
+   569→              )}
+   570→              {payLoading ? (
+   571→                <div className="flex items-center justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+   572→              ) : payments.length === 0 ? (
+   573→                <EmptyState title="No salary payments" description="Pay salary, advance or bonus — it will be recorded here and in accounts." />
+   574→              ) : (
+   575→                <div className="max-h-96 overflow-y-auto rounded-lg border thin-scrollbar">
+   576→                  <table className="w-full text-sm">
+   577→                    <thead className="sticky top-0 z-10 bg-muted">
+   578→                      <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
+   579→                        <th className="px-3 py-2 font-semibold">Date</th>
+   580→                        <th className="px-3 py-2 font-semibold">Type</th>
+   581→                        <th className="px-3 py-2 font-semibold">Month</th>
+   582→                        <th className="px-3 py-2 font-semibold">Method</th>
+   583→                        <th className="px-3 py-2 text-right font-semibold">Amount</th>
+   584→                        <th className="px-3 py-2 font-semibold">Notes</th>
+   585→                      </tr>
+   586→                    </thead>
+   587→                    <tbody>
+   588→                      {payments.map((p) => (
+   589→                        <tr key={p.id} className="border-b last:border-0">
+   590→                          <td className="whitespace-nowrap px-3 py-2 text-xs"><DateCell value={p.date} /></td>
+   591→                          <td className="px-3 py-2">
+   592→                            <StatusBadge label={SALARY_PAYMENT_TYPE_LABELS[p.type] ?? p.type} className={SALARY_TYPE_BADGE_COLORS[p.type]} />
+   593→                          </td>
+   594→                          <td className="whitespace-nowrap px-3 py-2 tabular-nums text-muted-foreground">{p.month ?? "—"}</td>
+   595→                          <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">{PAYMENT_METHOD_LABELS[p.method] ?? p.method}</td>
+   596→                          <td className="px-3 py-2 text-right"><Money value={p.amount} colored className="font-semibold" /></td>
+   597→                          <td className="max-w-[160px] truncate px-3 py-2 text-xs text-muted-foreground" title={p.notes ?? ""}>{p.notes ?? "—"}</td>
+   598→                        </tr>
+   599→                      ))}
+   600→                    </tbody>
+   601→                  </table>
+   602→                </div>
+   603→              )}
+   604→            </TabsContent>
+   605→          </Tabs>
+   606→        </div>
+   607→      </SheetContent>
+   608→
+   609→      {payOpen && <PaySalaryDialog employee={employee} onClose={() => setPayOpen(false)} />}
+   610→
+   611→      <ConfirmDialog
+   612→        open={deactivateOpen}
+   613→        onOpenChange={setDeactivateOpen}
+   614→        title={`Deactivate ${employee.name}?`}
+   615→        description="The employee stays in records for history but is hidden from attendance marking. Salary history is preserved."
+   616→        confirmLabel="Deactivate"
+   617→        destructive
+   618→        loading={togglingStatus}
+   619→        onConfirm={() => updateStatus(employee.id, "INACTIVE")}
+   620→      />
+   621→    </Sheet>
+   622→  )
+   623→}
+   624→
+   625→// ==================== PAY SALARY / ADVANCE DIALOG ====================
+   626→function PaySalaryDialog({ employee, onClose }: { employee: Employee; onClose: () => void }) {
+   627→  const qc = useQueryClient()
+   628→  const [saving, setSaving] = useState(false)
+   629→  const [form, setForm] = useState({
+   630→    type: "SALARY",
+   631→    amount: employee.salary || 0,
+   632→    method: "CASH",
+   633→    month: ymIST(0),
+   634→    date: ymdIST(),
+   635→    notes: "",
+   636→  })
+   637→
+   638→  function changeType(type: string) {
+   639→    setForm((f) => ({ ...f, type, amount: type === "SALARY" ? (employee.salary || 0) : f.amount }))
+   640→  }
+   641→
+   642→  async function save() {
+   643→    if (!form.amount || form.amount <= 0) {
+   644→      return toast({ title: "Enter a valid amount", variant: "destructive" })
+   645→    }
+   646→    setSaving(true)
+   647→    try {
+   648→      await api.post("staff/payments", { employeeId: employee.id, ...form })
+   649→      toast({
+   650→        title: `${SALARY_PAYMENT_TYPE_LABELS[form.type] ?? form.type} recorded`,
+   651→        description: `${employee.name} — ${fmtMoney(form.amount)} via ${PAYMENT_METHOD_LABELS[form.method] ?? form.method}${form.month ? ` (${form.month})` : ""}`,
+   652→      })
+   653→      qc.invalidateQueries({ queryKey: ["staff"] })
+   654→      qc.invalidateQueries({ queryKey: ["expenses"] })
+   655→      qc.invalidateQueries({ queryKey: ["payments"] })
+   656→      qc.invalidateQueries({ queryKey: ["accounts"] })
+   657→      onClose()
+   658→    } catch (e: any) {
+   659→      toast({ title: "Payment failed", description: e.message, variant: "destructive" })
+   660→    } finally {
+   661→      setSaving(false)
+   662→    }
+   663→  }
+   664→
+   665→  return (
+   666→    <Dialog open onOpenChange={(v) => !v && onClose()}>
+   667→      <DialogContent className="max-w-lg">
+   668→        <DialogHeader>
+   669→          <DialogTitle>Pay {employee.name}</DialogTitle>
+   670→        </DialogHeader>
+   671→        <div className="grid gap-3 sm:grid-cols-2">
+   672→          <Field label="Payment type" required>
+   673→            <SelectInput
+   674→              value={form.type}
+   675→              onChange={changeType}
+   676→              options={SALARY_PAYMENT_TYPES.map((t) => ({ value: t, label: SALARY_PAYMENT_TYPE_LABELS[t] }))}
+   677→            />
+   678→          </Field>
+   679→          <Field
+   680→            label="Amount (₹)"
+   681→            required
+   682→            hint={form.type === "SALARY" && employee.salary > 0 ? `Monthly salary: ${fmtMoney(employee.salary)}` : undefined}
+   683→          >
+   684→            <NumberInput value={form.amount} onChange={(v) => setForm({ ...form, amount: v })} min={0} />
+   685→          </Field>
+   686→          <Field label="Method" required>
+   687→            <SelectInput
+   688→              value={form.method}
+   689→              onChange={(v) => setForm({ ...form, method: v })}
+   690→              options={PAYMENT_METHODS.map((m) => ({ value: m, label: PAYMENT_METHOD_LABELS[m] }))}
+   691→            />
+   692→          </Field>
+   693→          <Field label="Month" hint="Salary period (YYYY-MM)">
+   694→            <TextInput type="month" value={form.month} onChange={(v) => setForm({ ...form, month: v })} />
+   695→          </Field>
+   696→          <Field label="Date" required>
+   697→            <TextInput type="date" value={form.date} onChange={(v) => setForm({ ...form, date: v })} />
+   698→          </Field>
+   699→          <div className="sm:col-span-2">
+   700→            <Field label="Notes">
+   701→              <TextArea value={form.notes} onChange={(v) => setForm({ ...form, notes: v })} rows={2} placeholder="Remarks…" />
+   702→            </Field>
+   703→          </div>
+   704→        </div>
+   705→        <p className="rounded-md bg-muted/60 p-2.5 text-xs text-muted-foreground">
+   706→          Salary &amp; bonus payments also create an expense entry and a money-out payment record. Advances are recoverable and not expensed; deductions reduce take-home.
+   707→        </p>
+   708→        <DialogFooter>
+   709→          <Button variant="outline" onClick={onClose}>Cancel</Button>
+   710→          <Button onClick={save} disabled={saving}>
+   711→            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Record Payment
+   712→          </Button>
+   713→        </DialogFooter>
+   714→      </DialogContent>
+   715→    </Dialog>
+   716→  )
+   717→}
+   718→
+   719→// ==================== ATTENDANCE TAB ====================
+   720→function AttendanceTab({ employees, loading: staffLoading }: { employees: Employee[]; loading?: boolean }) {
+   721→  const qc = useQueryClient()
+   722→  const canEdit = canDo("staff", "edit")
+   723→  const [view, setView] = useState<"day" | "month">("day")
+   724→  const [date, setDate] = useState(ymdIST())
+   725→  const [month, setMonth] = useState(ymIST(0))
+   726→  const [entries, setEntries] = useState<Record<string, string>>({})
+   727→  const [saving, setSaving] = useState(false)
+   728→
+   729→  const dayQuery = useQuery({
+   730→    queryKey: ["staff", "attendance", "day", date],
+   731→    queryFn: () => api.get(`staff/attendance${qs({ date })}`),
+   732→    enabled: view === "day" && !!date,
+   733→  })
+   734→
+   735→  // Prefill marks from saved records whenever the day data (re)loads
+   736→  useEffect(() => {
+   737→    const records: AttendanceRecord[] = dayQuery.data?.records ?? []
+   738→    setEntries(Object.fromEntries(records.map((r) => [r.employeeId, r.status])))
+   739→  }, [dayQuery.data])
+   740→
+   741→  const monthQuery = useQuery({
+   742→    queryKey: ["staff", "attendance", "month", month],
+   743→    queryFn: () => api.get(`staff/attendance${qs({ month })}`),
+   744→    enabled: view === "month" && /^\d{4}-\d{2}$/.test(month),
+   745→  })
+   746→
+   747→  // Summary chips
+   748→  const counts: Record<string, number> = { PRESENT: 0, ABSENT: 0, HALF_DAY: 0, LEAVE: 0 }
+   749→  for (const e of employees) {
+   750→    const s = entries[e.id]
+   751→    if (s && counts[s] !== undefined) counts[s] += 1
+   752→  }
+   753→  const marked = ATTENDANCE_STATUSES.reduce((s, k) => s + (counts[k] ?? 0), 0)
+   754→  const notMarked = Math.max(0, employees.length - marked)
+   755→
+   756→  function markAllPresent() {
+   757→    setEntries(Object.fromEntries(employees.map((e) => [e.id, "PRESENT"])))
+   758→  }
+   759→
+   760→  async function saveAttendance() {
+   761→    const payload = employees
+   762→      .filter((e) => entries[e.id])
+   763→      .map((e) => ({ employeeId: e.id, status: entries[e.id] }))
+   764→    if (payload.length === 0) {
+   765→      return toast({ title: "Nothing to save", description: "Mark at least one employee first.", variant: "destructive" })
+   766→    }
+   767→    setSaving(true)
+   768→    try {
+   769→      const res = await api.post("staff/attendance", { date, entries: payload })
+   770→      const saved: number = res?.records?.length ?? payload.length
+   771→      toast({
+   772→        title: "Attendance saved",
+   773→        description: `${saved} ${saved === 1 ? "employee" : "employees"} marked for ${fmtDateIST(date)}.`,
+   774→      })
+   775→      qc.invalidateQueries({ queryKey: ["staff"] })
+   776→    } catch (e: any) {
+   777→      toast({ title: "Failed to save attendance", description: e.message, variant: "destructive" })
+   778→    } finally {
+   779→      setSaving(false)
+   780→    }
+   781→  }
+   782→
+   783→  // Month matrix helpers
+   784→  const [year, mon] = month.split("-").map(Number)
+   785→  const daysInMonth = new Date(year, mon, 0).getDate()
+   786→  const dayMap = useMemo(() => {
+   787→    const m = new Map<string, string>()
+   788→    for (const r of (monthQuery.data?.records ?? []) as AttendanceRecord[]) {
+   789→      m.set(`${r.employeeId}|${parseInt(r.date.slice(8), 10)}`, r.status)
+   790→    }
+   791→    return m
+   792→  }, [monthQuery.data])
+   793→
+   794→  function isSunday(day: number) {
+   795→    return new Date(Date.UTC(year, mon - 1, day)).getUTCDay() === 0
+   796→  }
+   797→
+   798→  return (
+   799→    <div className="space-y-4">
+   800→      {/* Toolbar */}
+   801→      <div className="flex flex-wrap items-center gap-2">
+   802→        {view === "day" ? (
+   803→          <div className="relative">
+   804→            <CalendarCheck className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+   805→            <Input
+   806→              type="date"
+   807→              aria-label="Attendance date"
+   808→              value={date}
+   809→              onChange={(e) => setDate(e.target.value)}
+   810→              className="h-9 w-[170px] pl-9"
+   811→            />
+   812→          </div>
+   813→        ) : (
+   814→          <div className="relative">
+   815→            <CalendarDays className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+   816→            <Input
+   817→              type="month"
+   818→              aria-label="Attendance month"
+   819→              value={month}
+   820→              onChange={(e) => setMonth(e.target.value)}
+   821→              className="h-9 w-[170px] pl-9"
+   822→            />
+   823→          </div>
+   824→        )}
+   825→        {view === "day" && canEdit && (
+   826→          <>
+   827→            <Button variant="outline" size="sm" className="h-9" onClick={markAllPresent} disabled={employees.length === 0}>
+   828→              <CheckCheck className="mr-1.5 h-4 w-4" /> All Present
+   829→            </Button>
+   830→            <Button size="sm" className="h-9" onClick={saveAttendance} disabled={saving || !date || employees.length === 0}>
+   831→              {saving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <CalendarCheck className="mr-1.5 h-4 w-4" />}
+   832→              Save Attendance
+   833→            </Button>
+   834→          </>
+   835→        )}
+   836→        <div className="ml-auto">
+   837→          <Tabs value={view} onValueChange={(v) => setView(v === "month" ? "month" : "day")}>
+   838→            <TabsList>
+   839→              <TabsTrigger value="day" className="px-4">Day</TabsTrigger>
+   840→              <TabsTrigger value="month" className="px-4">Month</TabsTrigger>
+   841→            </TabsList>
+   842→          </Tabs>
+   843→        </div>
+   844→      </div>
+   845→
+   846→      {/* Day view */}
+   847→      {view === "day" && (
+   848→        <>
+   849→          <div className="flex flex-wrap items-center gap-2">
+   850→            <StatusBadge label={`Present ${counts.PRESENT}`} className={ATTENDANCE_BADGE_COLORS.PRESENT} />
+   851→            <StatusBadge label={`Absent ${counts.ABSENT}`} className={ATTENDANCE_BADGE_COLORS.ABSENT} />
+   852→            <StatusBadge label={`Half Day ${counts.HALF_DAY}`} className={ATTENDANCE_BADGE_COLORS.HALF_DAY} />
+   853→            <StatusBadge label={`Leave ${counts.LEAVE}`} className={ATTENDANCE_BADGE_COLORS.LEAVE} />
+   854→            <StatusBadge label={`Not Marked ${notMarked}`} className="bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400" />
+   855→            <span className="ml-auto text-xs text-muted-foreground">
+   856→              {employees.length} active employees · {fmtDateIST(date)}
+   857→            </span>
+   858→          </div>
+   859→
+   860→          <div className="overflow-hidden rounded-lg border bg-card">
+   861→            <div className="overflow-x-auto thin-scrollbar">
+   862→              <table className="w-full text-sm">
+   863→                <thead>
+   864→                  <tr className="border-b bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
+   865→                    <th className="px-3 py-2 font-semibold">Employee</th>
+   866→                    <th className="hidden px-3 py-2 font-semibold md:table-cell">Designation</th>
+   867→                    <th className="hidden px-3 py-2 font-semibold lg:table-cell">Phone</th>
+   868→                    <th className="w-[180px] px-3 py-2 font-semibold">Attendance</th>
+   869→                  </tr>
+   870→                </thead>
+   871→                <tbody>
+   872→                  {dayQuery.isLoading || staffLoading ? (
+   873→                    Array.from({ length: 4 }).map((_, i) => (
+   874→                      <tr key={i} className="border-b last:border-0">
+   875→                        <td colSpan={4} className="px-3 py-3"><div className="h-5 w-full animate-pulse rounded bg-muted" /></td>
+   876→                      </tr>
+   877→                    ))
+   878→                  ) : employees.length === 0 ? (
+   879→                    <tr>
+   880→                      <td colSpan={4} className="border-0 p-0">
+   881→                        <EmptyState title="No active employees" description="Add employees to start marking daily attendance." />
+   882→                      </td>
+   883→                    </tr>
+   884→                  ) : (
+   885→                    employees.map((e) => (
+   886→                      <tr key={e.id} className="border-b last:border-0 hover:bg-accent/40">
+   887→                        <td className="px-3 py-2">
+   888→                          <div className="flex items-center gap-2">
+   889→                            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+   890→                              {e.name?.[0]?.toUpperCase()}
+   891→                            </div>
+   892→                            <div className="min-w-0">
+   893→                              <p className="truncate font-medium">{e.name}</p>
+   894→                              <p className="text-xs text-muted-foreground">{e.code}</p>
+   895→                            </div>
+   896→                          </div>
+   897→                        </td>
+   898→                        <td className="hidden px-3 py-2 text-muted-foreground md:table-cell">{e.designation ?? "—"}</td>
+   899→                        <td className="hidden px-3 py-2 tabular-nums text-muted-foreground lg:table-cell">{e.phone ?? "—"}</td>
+   900→                        <td className="px-3 py-2">
+   901→                          <div className="w-[170px]">
+   902→                            <SelectInput
+   903→                              value={entries[e.id] ?? "__none"}
+   904→                              onChange={(v) => setEntries({ ...entries, [e.id]: v === "__none" ? "" : v })}
+   905→                              disabled={!canEdit}
+   906→                              options={[
+   907→                                { value: "__none", label: "Not Marked" },
+   908→                                ...ATTENDANCE_STATUSES.map((s) => ({ value: s, label: ATTENDANCE_STATUS_LABELS[s] })),
+   909→                              ]}
+   910→                            />
+   911→                          </div>
+   912→                        </td>
+   913→                      </tr>
+   914→                    ))
+   915→                  )}
+   916→                </tbody>
+   917→              </table>
+   918→            </div>
+   919→          </div>
+   920→        </>
+   921→      )}
+   922→
+   923→      {/* Month view */}
+   924→      {view === "month" && (
+   925→        <>
+   926→          {monthQuery.isLoading ? (
+   927→            <div className="flex items-center justify-center py-16">
+   928→              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+   929→            </div>
+   930→          ) : employees.length === 0 ? (
+   931→            <EmptyState title="No active employees" description="Add employees to see the monthly attendance matrix." />
+   932→          ) : (
+   933→            <div className="overflow-hidden rounded-lg border bg-card">
+   934→              <div className="overflow-x-auto thin-scrollbar">
+   935→                <table className="w-full text-sm">
+   936→                  <thead>
+   937→                    <tr className="border-b bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
+   938→                      <th className="sticky left-0 z-10 bg-muted px-3 py-2 text-left font-semibold">Employee</th>
+   939→                      {Array.from({ length: daysInMonth }, (_, i) => i + 1).map((d) => (
+   940→                        <th
+   941→                          key={d}
+   942→                          className={cn(
+   943→                            "w-7 px-0 py-2 text-center font-semibold tabular-nums",
+   944→                            isSunday(d) && "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+   945→                          )}
+   946→                        >
+   947→                          {d}
+   948→                        </th>
+   949→                      ))}
+   950→                      <th className="px-3 py-2 text-center font-semibold" title="Days present this month">P</th>
+   951→                    </tr>
+   952→                  </thead>
+   953→                  <tbody>
+   954→                    {employees.map((e) => {
+   955→                      let presentDays = 0
+   956→                      for (let d = 1; d <= daysInMonth; d++) {
+   957→                        if (dayMap.get(`${e.id}|${d}`) === "PRESENT") presentDays += 1
+   958→                      }
+   959→                      return (
+   960→                        <tr key={e.id} className="border-b last:border-0">
+   961→                          <td className="sticky left-0 z-10 whitespace-nowrap bg-card px-3 py-1.5">
+   962→                            <span className="text-sm font-medium">{e.name}</span>
+   963→                            <span className="ml-1.5 text-xs text-muted-foreground">{e.code}</span>
+   964→                          </td>
+   965→                          {Array.from({ length: daysInMonth }, (_, i) => i + 1).map((d) => {
+   966→                            const status = dayMap.get(`${e.id}|${d}`)
+   967→                            return (
+   968→                              <td key={d} className={cn("py-1.5 text-center", isSunday(d) && "bg-amber-500/5")}>
+   969→                                {status ? (
+   970→                                  <span
+   971→                                    title={`${e.name} — ${fmtDateIST(`${month}-${String(d).padStart(2, "0")}`)}: ${ATTENDANCE_STATUS_LABELS[status] ?? status}`}
+   972→                                    className={cn("inline-block h-2.5 w-2.5 rounded-full", ATTENDANCE_DOT_COLORS[status] ?? "bg-zinc-400")}
+   973→                                  />
+   974→                                ) : (
+   975→                                  <span className="text-[10px] leading-none text-muted-foreground/40">·</span>
+   976→                                )}
+   977→                              </td>
+   978→                            )
+   979→                          })}
+   980→                          <td className="px-3 py-1.5 text-center text-xs font-semibold tabular-nums">{presentDays}</td>
+   981→                        </tr>
+   982→                      )
+   983→                    })}
+   984→                  </tbody>
+   985→                </table>
+   986→              </div>
+   987→            </div>
+   988→          )}
+   989→          <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+   990→            {ATTENDANCE_STATUSES.map((s) => (
+   991→              <span key={s} className="inline-flex items-center gap-1.5">
+   992→                <span className={cn("h-2.5 w-2.5 rounded-full", ATTENDANCE_DOT_COLORS[s])} />
+   993→                {ATTENDANCE_STATUS_LABELS[s]}
+   994→              </span>
+   995→            ))}
+   996→            <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full border border-dashed border-muted-foreground/60" />Not marked</span>
+   997→            <span>Sundays shaded · P = days present</span>
+   998→          </div>
+   999→        </>
+  1000→      )}
+  1001→    </div>
+  1002→  )
+  1003→}
+  1004→
+  1005→// ==================== TASKS TAB ====================
+  1006→function TasksTab({ employees, focusId, autoNew }: { employees: Employee[]; focusId?: string | null; autoNew?: boolean }) {
+  1007→  const qc = useQueryClient()
+  1008→  const canCreate = canDo("tasks", "create")
+  1009→  const canEdit = canDo("tasks", "edit")
+  1010→  const canDelete = canDo("tasks", "delete")
+  1011→  const [creating, setCreating] = useState(!!autoNew)
+  1012→  const [editing, setEditing] = useState<Task | null>(null)
+  1013→  const [deleting, setDeleting] = useState<Task | null>(null)
+  1014→  const [statusFilter, setStatusFilter] = useState("ALL")
+  1015→  const [busyId, setBusyId] = useState<string | null>(null)
+  1016→
+  1017→  const { data, isLoading } = useQuery({
+  1018→    queryKey: ["tasks"],
+  1019→    queryFn: () => api.get("tasks"),
+  1020→  })
+  1021→  const tasks: Task[] = data?.tasks ?? []
+  1022→  const summary = data?.summary
+  1023→
+  1024→  // Deep-link focus: scroll the task into view once loaded
+  1025→  useEffect(() => {
+  1026→    if (!focusId || tasks.length === 0) return
+  1027→    const el = document.getElementById(`task-${focusId}`)
+  1028→    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" })
+  1029→  }, [focusId, tasks])
+  1030→
+  1031→  const completedCount = tasks.filter((t) => t.status === "COMPLETED").length
+  1032→  const filtered = statusFilter === "ALL" ? tasks : tasks.filter((t) => t.status === statusFilter)
+  1033→
+  1034→  async function changeStatus(task: Task, status: string) {
+  1035→    setBusyId(task.id)
+  1036→    try {
+  1037→      await api.put(`tasks/${task.id}`, { status })
+  1038→      toast({
+  1039→        title: status === "COMPLETED" ? "Task completed" : status === "IN_PROGRESS" ? "Task started" : `Task ${TASK_STATUS_LABELS[status]?.toLowerCase() ?? "updated"}`,
+  1040→        description: task.title,
+  1041→      })
+  1042→      qc.invalidateQueries({ queryKey: ["tasks"] })
+  1043→    } catch (e: any) {
+  1044→      toast({ title: "Could not update task", description: e.message, variant: "destructive" })
+  1045→    } finally {
+  1046→      setBusyId(null)
+  1047→    }
+  1048→  }
+  1049→
+  1050→  async function deleteTask() {
+  1051→    if (!deleting) return
+  1052→    setBusyId(deleting.id)
+  1053→    try {
+  1054→      await api.del(`tasks/${deleting.id}`)
+  1055→      toast({ title: "Task deleted", description: deleting.title })
+  1056→      qc.invalidateQueries({ queryKey: ["tasks"] })
+  1057→      setDeleting(null)
+  1058→    } catch (e: any) {
+  1059→      toast({ title: "Could not delete task", description: e.message, variant: "destructive" })
+  1060→    } finally {
+  1061→      setBusyId(null)
+  1062→    }
+  1063→  }
+  1064→
+  1065→  const chips = [
+  1066→    { value: "ALL", label: "All", count: tasks.length },
+  1067→    ...TASK_STATUSES.map((s) => ({ value: s, label: TASK_STATUS_LABELS[s], count: tasks.filter((t) => t.status === s).length })),
+  1068→  ]
+  1069→
+  1070→  return (
+  1071→    <div className="space-y-4">
+  1072→      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+  1073→        <StatCard label="Pending" value={summary?.pending ?? (isLoading ? "…" : 0)} icon={<ListTodo className="h-4 w-4" />} />
+  1074→        <StatCard label="In Progress" value={summary?.inProgress ?? (isLoading ? "…" : 0)} tone="warning" icon={<Play className="h-4 w-4" />} />
+  1075→        <StatCard
+  1076→          label="Overdue"
+  1077→          value={summary?.overdue ?? (isLoading ? "…" : 0)}
+  1078→          tone={(summary?.overdue ?? 0) > 0 ? "negative" : "default"}
+  1079→          icon={<AlertTriangle className="h-4 w-4" />}
+  1080→        />
+  1081→        <StatCard label="Completed" value={isLoading ? "…" : completedCount} tone="positive" icon={<CheckCircle2 className="h-4 w-4" />} />
+  1082→      </div>
+  1083→
+  1084→      <div className="flex flex-wrap items-center gap-1.5">
+  1085→        {chips.map((c) => (
+  1086→          <button
+  1087→            key={c.value}
+  1088→            onClick={() => setStatusFilter(c.value)}
+  1089→            className={cn(
+  1090→              "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+  1091→              statusFilter === c.value
+  1092→                ? "border-primary bg-primary text-primary-foreground"
+  1093→                : "bg-card text-muted-foreground hover:bg-accent hover:text-foreground",
+  1094→            )}
+  1095→          >
+  1096→            {c.label}
+  1097→            <span className="tabular-nums opacity-70">{c.count}</span>
+  1098→          </button>
+  1099→        ))}
+  1100→        {canCreate && (
+  1101→          <Button size="sm" className="ml-auto h-8" onClick={() => setCreating(true)}>
+  1102→            <ListTodo className="mr-1.5 h-4 w-4" /> New Task
+  1103→          </Button>
+  1104→        )}
+  1105→      </div>
+  1106→
+  1107→      {isLoading ? (
+  1108→        <div className="space-y-2">
+  1109→          {Array.from({ length: 4 }).map((_, i) => (
+  1110→            <div key={i} className="h-16 animate-pulse rounded-lg border bg-card" />
+  1111→          ))}
+  1112→        </div>
+  1113→      ) : filtered.length === 0 ? (
+  1114→        <EmptyState
+  1115→          title={statusFilter === "ALL" ? "No tasks yet" : `No ${TASK_STATUS_LABELS[statusFilter]?.toLowerCase() ?? statusFilter.toLowerCase()} tasks`}
+  1116→          description="Create tasks to assign work to your staff with priorities and due dates."
+  1117→          action={canCreate && statusFilter === "ALL" ? (
+  1118→            <Button size="sm" onClick={() => setCreating(true)}>
+  1119→              <ListTodo className="mr-1.5 h-4 w-4" /> New Task
+  1120→            </Button>
+  1121→          ) : undefined}
+  1122→        />
+  1123→      ) : (
+  1124→        <div className="space-y-2">
+  1125→          {filtered.map((t) => {
+  1126→            const overdue = isTaskOverdue(t)
+  1127→            const busy = busyId === t.id
+  1128→            return (
+  1129→              <div
+  1130→                key={t.id}
+  1131→                id={`task-${t.id}`}
+  1132→                className={cn(
+  1133→                  "rounded-lg border bg-card p-3 shadow-sm transition-shadow hover:shadow-md",
+  1134→                  focusId === t.id && "ring-2 ring-primary",
+  1135→                  t.status === "COMPLETED" && "opacity-75",
+  1136→                )}
+  1137→              >
+  1138→                <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+  1139→                  <StatusBadge label={TASK_PRIORITY_LABELS[t.priority] ?? t.priority} className={TASK_PRIORITY_COLORS[t.priority]} />
+  1140→                  <div className="min-w-0 flex-1">
+  1141→                    <p className={cn("truncate text-sm font-medium", t.status === "COMPLETED" && "text-muted-foreground line-through")}>
+  1142→                      {t.title}
+  1143→                    </p>
+  1144→                    <p className="truncate text-xs text-muted-foreground">
+  1145→                      {t.assignedTo ? `Assigned to ${t.assignedTo}` : "Unassigned"}
+  1146→                      {t.createdByName ? ` · by ${t.createdByName}` : ""}
+  1147→                    </p>
+  1148→                  </div>
+  1149→                  <div className="text-right">
+  1150→                    <p className={cn("whitespace-nowrap text-xs font-medium", overdue ? "text-red-600 dark:text-red-400" : "text-muted-foreground")}>
+  1151→                      {t.dueDate ? (
+  1152→                        <>
+  1153→                          <CalendarClock className="mr-1 inline h-3.5 w-3.5" />
+  1154→                          <DateCell value={t.dueDate} />
+  1155→                        </>
+  1156→                      ) : (
+  1157→                        "No due date"
+  1158→                      )}
+  1159→                    </p>
+  1160→                    {overdue && <p className="text-[10px] font-semibold uppercase tracking-wide text-red-600 dark:text-red-400">Overdue</p>}
+  1161→                  </div>
+  1162→                  <StatusBadge label={TASK_STATUS_LABELS[t.status] ?? t.status} className={TASK_STATUS_BADGE_COLORS[t.status]} />
+  1163→                  {canEdit && (
+  1164→                    <div className="flex items-center gap-1">
+  1165→                      {t.status === "PENDING" && (
+  1166→                        <Button variant="outline" size="sm" className="h-8" disabled={busy} onClick={() => changeStatus(t, "IN_PROGRESS")}>
+  1167→                          <Play className="mr-1 h-3.5 w-3.5" /> Start
+  1168→                        </Button>
+  1169→                      )}
+  1170→                      {(t.status === "PENDING" || t.status === "IN_PROGRESS") && (
+  1171→                        <Button variant="outline" size="sm" className="h-8" disabled={busy} onClick={() => changeStatus(t, "COMPLETED")}>
+  1172→                          <CheckCircle2 className="mr-1 h-3.5 w-3.5" /> Complete
+  1173→                        </Button>
+  1174→                      )}
+  1175→                      {(t.status === "COMPLETED" || t.status === "CANCELLED") && (
+  1176→                        <Button variant="ghost" size="sm" className="h-8" disabled={busy} onClick={() => changeStatus(t, "PENDING")}>
+  1177→                          <RotateCcw className="mr-1 h-3.5 w-3.5" /> Reopen
+  1178→                        </Button>
+  1179→                      )}
+  1180→                      <Button variant="ghost" size="icon" className="h-8 w-8" disabled={busy} onClick={() => setEditing(t)} aria-label={`Edit ${t.title}`}>
+  1181→                        <Pencil className="h-3.5 w-3.5" />
+  1182→                      </Button>
+  1183→                      {canDelete && (
+  1184→                        <Button
+  1185→                          variant="ghost"
+  1186→                          size="icon"
+  1187→                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+  1188→                          disabled={busy}
+  1189→                          onClick={() => setDeleting(t)}
+  1190→                          aria-label={`Delete ${t.title}`}
+  1191→                        >
+  1192→                          <Trash2 className="h-3.5 w-3.5" />
+  1193→                        </Button>
+  1194→                      )}
+  1195→                    </div>
+  1196→                  )}
+  1197→                </div>
+  1198→                {t.description && <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">{t.description}</p>}
+  1199→              </div>
+  1200→            )
+  1201→          })}
+  1202→        </div>
+  1203→      )}
+  1204→
+  1205→      {creating && <TaskForm employees={employees} onClose={() => setCreating(false)} />}
+  1206→      {editing && <TaskForm employees={employees} task={editing} onClose={() => setEditing(null)} />}
+  1207→      {deleting && (
+  1208→        <ConfirmDialog
+  1209→          open
+  1210→          onOpenChange={() => setDeleting(null)}
+  1211→          title="Delete task?"
+  1212→          description={`"${deleting.title}" will be permanently removed.`}
+  1213→          confirmLabel="Delete"
+  1214→          destructive
+  1215→          loading={busyId === deleting.id}
+  1216→          onConfirm={deleteTask}
+  1217→        />
+  1218→      )}
+  1219→    </div>
+  1220→  )
+  1221→}
+  1222→
+  1223→// ==================== TASK FORM (create / edit) ====================
+  1224→function TaskForm({ task, employees, onClose }: { task?: Task; employees: Employee[]; onClose: () => void }) {
+  1225→  const qc = useQueryClient()
+  1226→  const [saving, setSaving] = useState(false)
+  1227→  const [form, setForm] = useState({
+  1228→    title: task?.title ?? "",
+  1229→    description: task?.description ?? "",
+  1230→    assignedTo: task?.assignedTo ?? "",
+  1231→    priority: task?.priority ?? "MEDIUM",
+  1232→    dueDate: task?.dueDate ? fmtDateIST(task.dueDate, "yyyy-MM-dd") : "",
+  1233→  })
+  1234→
+  1235→  async function save() {
+  1236→    if (!form.title.trim()) return toast({ title: "Title is required", variant: "destructive" })
+  1237→    setSaving(true)
+  1238→    try {
+  1239→      const payload = {
+  1240→        title: form.title.trim(),
+  1241→        description: form.description.trim(),
+  1242→        assignedTo: form.assignedTo.trim(),
+  1243→        priority: form.priority,
+  1244→        dueDate: form.dueDate,
+  1245→      }
+  1246→      if (task) await api.put(`tasks/${task.id}`, payload)
+  1247→      else await api.post("tasks", payload)
+  1248→      toast({ title: task ? "Task updated" : "Task created", description: form.title.trim() })
+  1249→      qc.invalidateQueries({ queryKey: ["tasks"] })
+  1250→      onClose()
+  1251→    } catch (e: any) {
+  1252→      toast({ title: "Failed to save task", description: e.message, variant: "destructive" })
+  1253→    } finally {
+  1254→      setSaving(false)
+  1255→    }
+  1256→  }
+  1257→
+  1258→  return (
+  1259→    <Dialog open onOpenChange={(v) => !v && onClose()}>
+  1260→      <DialogContent className="max-w-lg">
+  1261→        <DialogHeader>
+  1262→          <DialogTitle>{task ? "Edit Task" : "New Task"}</DialogTitle>
+  1263→        </DialogHeader>
+  1264→        <div className="grid gap-3 sm:grid-cols-2">
+  1265→          <div className="sm:col-span-2">
+  1266→            <Field label="Title" required>
+  1267→              <TextInput value={form.title} onChange={(v) => setForm({ ...form, title: v })} placeholder="What needs to be done?" autoFocus />
+  1268→            </Field>
+  1269→          </div>
+  1270→          <Field label="Assign to" hint="Staff name or free text">
+  1271→            <Input
+  1272→              list="task-assign-suggestions"
+  1273→              value={form.assignedTo}
+  1274→              onChange={(e) => setForm({ ...form, assignedTo: e.target.value })}
+  1275→              placeholder="e.g. Asha Verma"
+  1276→              className="h-9"
+  1277→            />
+  1278→            <datalist id="task-assign-suggestions">
+  1279→              {employees.map((e) => (
+  1280→                <option key={e.id} value={e.name} />
+  1281→              ))}
+  1282→            </datalist>
+  1283→          </Field>
+  1284→          <Field label="Priority">
+  1285→            <SelectInput
+  1286→              value={form.priority}
+  1287→              onChange={(v) => setForm({ ...form, priority: v })}
+  1288→              options={TASK_PRIORITIES.map((p) => ({ value: p, label: TASK_PRIORITY_LABELS[p] }))}
+  1289→            />
+  1290→          </Field>
+  1291→          <Field label="Due date">
+  1292→            <TextInput type="date" value={form.dueDate} onChange={(v) => setForm({ ...form, dueDate: v })} />
+  1293→          </Field>
+  1294→          <div className="sm:col-span-2">
+  1295→            <Field label="Description / notes">
+  1296→              <TextArea value={form.description} onChange={(v) => setForm({ ...form, description: v })} rows={3} placeholder="Details, instructions, remarks…" />
+  1297→            </Field>
+  1298→          </div>
+  1299→        </div>
+  1300→        <DialogFooter>
+  1301→          <Button variant="outline" onClick={onClose}>Cancel</Button>
+  1302→          <Button onClick={save} disabled={saving}>
+  1303→            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} {task ? "Save" : "Create Task"}
+  1304→          </Button>
+  1305→        </DialogFooter>
+  1306→      </DialogContent>
+  1307→    </Dialog>
+  1308→  )
+  1309→}
+  1310→

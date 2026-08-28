@@ -1,0 +1,562 @@
+     1→   500→function OrdersTab({
+     2→   501→  orders, summary, loading, productName, onOpen, onNew, canCreate,
+     3→   502→}: {
+     4→   503→  orders: ProductionOrder[]
+     5→   504→  summary?: { active: number; completed: number }
+     6→   505→  loading: boolean
+     7→   506→  productName: (id: string | null | undefined) => string
+     8→   507→  onOpen: (id: string) => void
+     9→   508→  onNew: () => void
+    10→   509→  canCreate: boolean
+    11→   510→}) {
+    12→   511→  const [statusFilter, setStatusFilter] = useState("ALL")
+    13→   512→  const [q, setQ] = useState("")
+    14→   513→
+    15→   514→  const filtered = orders.filter((o) => {
+    16→   515→    if (statusFilter !== "ALL" && o.status !== statusFilter) return false
+    17→   516→    if (q) {
+    18→   517→      const hay = `${o.number} ${productName(o.productId)} ${o.designName ?? ""} ${o.contractor?.name ?? ""}`.toLowerCase()
+    19→   518→      if (!hay.includes(q.toLowerCase())) return false
+    20→   519→    }
+    21→   520→    return true
+    22→   521→  })
+    23→   522→
+    24→   523→  const activePieces = orders.filter((o) => o.status === "IN_PROGRESS").reduce((s, o) => s + o.quantity, 0)
+    25→   524→  const overdueCount = orders.filter((o) => isOverdue(o.targetDate, o.status === "IN_PROGRESS")).length
+    26→   525→
+    27→   526→  return (
+    28→   527→    <div className="space-y-4">
+    29→   528→      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+    30→   529→        <StatCard label="Active Orders" value={summary?.active ?? "…"} sub="In production now" icon={<Factory className="h-4 w-4" />} tone="primary" />
+    31→   530→        <StatCard label="Completed Orders" value={summary?.completed ?? "…"} sub="Finished stock added" icon={<CheckCircle2 className="h-4 w-4" />} tone="positive" />
+    32→   531→        <StatCard label="Pieces In Production" value={fmtNum(activePieces)} sub="Across active orders" icon={<Layers className="h-4 w-4" />} />
+    33→   532→        <StatCard label="Overdue Targets" value={overdueCount} sub="Active past target date" icon={<Timer className="h-4 w-4" />} tone={overdueCount > 0 ? "negative" : "default"} />
+    34→   533→      </div>
+    35→   534→
+    36→   535→      {/* Toolbar */}
+    37→   536→      <div className="flex flex-wrap items-center gap-2">
+    38→   537→        <div className="relative min-w-[200px] flex-1 sm:max-w-xs">
+    39→   538→          <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+    40→   539→          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search number, product, design…" className="h-9 pl-8" />
+    41→   540→        </div>
+    42→   541→        <div className="w-44">
+    43→   542→          <SelectInput
+    44→   543→            value={statusFilter}
+    45→   544→            onChange={setStatusFilter}
+    46→   545→            options={[
+    47→   546→              { value: "ALL", label: "All Statuses" },
+    48→   547→              { value: "IN_PROGRESS", label: "In Progress" },
+    49→   548→              { value: "COMPLETED", label: "Completed" },
+    50→   549→              { value: "CANCELLED", label: "Cancelled" },
+    51→   550→            ]}
+    52→   551→          />
+    53→   552→        </div>
+    54→   553→        <Button
+    55→   554→          variant="outline" size="sm" className="ml-auto h-9"
+    56→   555→          disabled={!filtered.length}
+    57→   556→          onClick={() => exportCSV("production-orders",
+    58→   557→            ["Number", "Product", "Design", "Qty", "Stage", "Status", "Contractor", "Target Date", "Cost Estimate"],
+    59→   558→            filtered.map((o) => [o.number, productName(o.productId), o.designName ?? "", o.quantity, PRODUCTION_STAGE_LABELS[o.stage] ?? o.stage, ORDER_STATUS_LABEL[o.status] ?? o.status, o.contractor?.name ?? "", o.targetDate ? fmtDateIST(o.targetDate) : "", o.costEstimate]))}
+    60→   559→        >
+    61→   560→          Export CSV
+    62→   561→        </Button>
+    63→   562→      </div>
+    64→   563→
+    65→   564→      {loading ? (
+    66→   565→        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+    67→   566→          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-48 rounded-lg" />)}
+    68→   567→        </div>
+    69→   568→      ) : filtered.length === 0 ? (
+    70→   569→        <EmptyState
+    71→   570→          icon={<Factory className="h-6 w-6" />}
+    72→   571→          title={q || statusFilter !== "ALL" ? "No matching production orders" : "No production orders yet"}
+    73→   572→          description={q || statusFilter !== "ALL"
+    74→   573→            ? "Try clearing the search or status filter."
+    75→   574→            : "Create a production order to track a batch from design through packaging."}
+    76→   575→          action={canCreate && !q && statusFilter === "ALL" ? (
+    77→   576→            <Button size="sm" onClick={onNew}><Plus className="mr-1.5 h-4 w-4" /> New Production Order</Button>
+    78→   577→          ) : undefined}
+    79→   578→        />
+    80→   579→      ) : (
+    81→   580→        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+    82→   581→          {filtered.map((o) => {
+    83→   582→            const overdue = isOverdue(o.targetDate, o.status === "IN_PROGRESS")
+    84→   583→            return (
+    85→   584→              <button
+    86→   585→                key={o.id}
+    87→   586→                onClick={() => onOpen(o.id)}
+    88→   587→                className="group rounded-lg border bg-card p-4 text-left shadow-sm transition-all hover:border-primary/40 hover:shadow-md"
+    89→   588→              >
+    90→   589→                <div className="flex items-start justify-between gap-2">
+    91→   590→                  <div className="min-w-0">
+    92→   591→                    <p className="font-mono text-xs font-semibold text-muted-foreground">{o.number}</p>
+    93→   592→                    <p className="mt-0.5 truncate font-medium">{productName(o.productId)}</p>
+    94→   593→                    {o.designName && <p className="truncate text-xs italic text-muted-foreground">{o.designName}</p>}
+    95→   594→                  </div>
+    96→   595→                  <StatusBadge label={ORDER_STATUS_LABEL[o.status] ?? o.status} className={ORDER_STATUS_BADGE[o.status]} />
+    97→   596→                </div>
+    98→   597→                <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+    99→   598→                  <span className="flex items-center gap-1">
+   100→   599→                    <Package className="h-3.5 w-3.5" />
+   101→   600→                    <b className="text-foreground">{fmtNum(o.quantity)}</b> pcs
+   102→   601→                  </span>
+   103→   602→                  <span className="flex min-w-0 items-center gap-1">
+   104→   603→                    <HardHat className="h-3.5 w-3.5 shrink-0" />
+   105→   604→                    <span className="truncate">{o.contractor?.name ?? "In-house"}</span>
+   106→   605→                  </span>
+   107→   606→                  <span className={cn("flex items-center gap-1", overdue && "font-medium text-red-600 dark:text-red-400")}>
+   108→   607→                    <CalendarClock className="h-3.5 w-3.5" />
+   109→   608→                    <DateCell value={o.targetDate} />
+   110→   609→                  </span>
+   111→   610→                </div>
+   112→   611→                <div className="mt-3 border-t pt-3">
+   113→   612→                  <StageDots stage={o.stage} status={o.status} />
+   114→   613→                </div>
+   115→   614→              </button>
+   116→   615→            )
+   117→   616→          })}
+   118→   617→        </div>
+   119→   618→      )}
+   120→   619→
+   121→   620→      {statusFilter !== "ALL" && (
+   122→   621→        <p className="text-xs text-muted-foreground">
+   123→   622→          Filtered by status: {ORDER_STATUS_LABEL[statusFilter]} ·{" "}
+   124→   623→          <button className="underline" onClick={() => setStatusFilter("ALL")}>clear</button>
+   125→   624→        </p>
+   126→   625→      )}
+   127→   626→    </div>
+   128→   627→  )
+   129→   628→}
+   130→   629→
+   131→   630→// ==================== ORDER DETAIL SHEET ====================
+   132→   631→function ProductionOrderDetail({
+   133→   632→  id, onClose, canEdit, productName, variantLabel,
+   134→   633→}: {
+   135→   634→  id: string
+   136→   635→  onClose: () => void
+   137→   636→  canEdit: boolean
+   138→   637→  productName: (id: string | null | undefined) => string
+   139→   638→  variantLabel: (id: string | null | undefined) => string
+   140→   639→}) {
+   141→   640→  const qc = useQueryClient()
+   142→   641→  const { data, isLoading } = useQuery({ queryKey: ["production", id], queryFn: () => api.get(`production/${id}`) })
+   143→   642→  const o: ProductionOrder | undefined = data?.order
+   144→   643→
+   145→   644→  const [jumpStage, setJumpStage] = useState("")
+   146→   645→  const [confirmTarget, setConfirmTarget] = useState<string | null>(null) // "COMPLETED" confirm guard
+   147→   646→
+   148→   647→  const stageMut = useMutation({
+   149→   648→    mutationFn: (stage?: string) => api.post(`production/${id}/stage`, stage ? { stage } : {}),
+   150→   649→    onSuccess: (res: any) => {
+   151→   650→      const st = res?.order?.stage as string
+   152→   651→      toast({
+   153→   652→        title: st === "COMPLETED" ? "Order completed" : "Stage updated",
+   154→   653→        description: st === "COMPLETED"
+   155→   654→          ? `${res?.order?.number} finished — plan quantities added to finished stock.`
+   156→   655→          : `${res?.order?.number} is now at ${PRODUCTION_STAGE_LABELS[st] ?? st}.`,
+   157→   656→      })
+   158→   657→      qc.invalidateQueries({ queryKey: ["production"] })
+   159→   658→      qc.invalidateQueries({ queryKey: ["inventory"] })
+   160→   659→      qc.invalidateQueries({ queryKey: ["dashboard"] })
+   161→   660→    },
+   162→   661→    onError: (e: any) => toast({ title: "Stage change failed", description: e.message, variant: "destructive" }),
+   163→   662→  })
+   164→   663→
+   165→   664→  const cancelMut = useMutation({
+   166→   665→    mutationFn: () => api.post(`production/${id}/cancel`),
+   167→   666→    onSuccess: () => {
+   168→   667→      toast({ title: "Production order cancelled" })
+   169→   668→      qc.invalidateQueries({ queryKey: ["production"] })
+   170→   669→    },
+   171→   670→    onError: (e: any) => toast({ title: "Cancel failed", description: e.message, variant: "destructive" }),
+   172→   671→  })
+   173→   672→
+   174→   673→  if (isLoading || !o) {
+   175→   674→    return (
+   176→   675→      <Sheet open onOpenChange={(v) => !v && onClose()}>
+   177→   676→        <SheetContent side="right" className="w-full overflow-y-auto p-0 sm:max-w-2xl thin-scrollbar">
+   178→   677→          <SheetHeader className="border-b bg-muted/40 px-5 py-4">
+   179→   678→            <SheetTitle>Production order</SheetTitle>
+   180→   679→          </SheetHeader>
+   181→   680→          <div className="flex items-center justify-center py-24"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+   182→   681→        </SheetContent>
+   183→   682→      </Sheet>
+   184→   683→    )
+   185→   684→  }
+   186→   685→
+   187→   686→  const idx = STAGES.indexOf(o.stage)
+   188→   687→  const nextStage = idx >= 0 && idx < STAGES.length - 1 ? STAGES[idx + 1] : null
+   189→   688→  const plan = parsePlan(o)
+   190→   689→  const active = o.status === "IN_PROGRESS"
+   191→   690→  const forwardStages = STAGES.slice(idx + 1).map((s) => ({ value: s, label: PRODUCTION_STAGE_LABELS[s] ?? s }))
+   192→   691→
+   193→   692→  return (
+   194→   693→    <Sheet open onOpenChange={(v) => !v && onClose()}>
+   195→   694→      <SheetContent side="right" className="w-full overflow-y-auto p-0 sm:max-w-2xl thin-scrollbar">
+   196→   695→        <SheetHeader className="border-b bg-muted/40 px-5 py-4">
+   197→   696→          <SheetTitle className="flex items-center gap-3">
+   198→   697→            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+   199→   698→              <Factory className="h-5 w-5" />
+   200→   699→            </div>
+   201→   700→            <div className="min-w-0">
+   202→   701→              <p className="flex flex-wrap items-center gap-2 text-lg font-semibold">
+   203→   702→                <span className="font-mono">{o.number}</span>
+   204→   703→                <StatusBadge label={ORDER_STATUS_LABEL[o.status] ?? o.status} className={ORDER_STATUS_BADGE[o.status]} />
+   205→   704→              </p>
+   206→   705→              <p className="truncate text-xs font-normal text-muted-foreground">
+   207→   706→                {productName(o.productId)}{o.designName ? ` · ${o.designName}` : ""}
+   208→   707→              </p>
+   209→   708→            </div>
+   210→   709→          </SheetTitle>
+   211→   710→        </SheetHeader>
+   212→   711→
+   213→   712→        <div className="space-y-5 p-5">
+   214→   713→          {/* Stats */}
+   215→   714→          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+   216→   715→            <StatCard label="Quantity" value={fmtNum(o.quantity)} sub="pieces planned" />
+   217→   716→            <StatCard label="Cost Estimate" value={fmtMoney(o.costEstimate)} icon={<Banknote className="h-4 w-4" />} />
+   218→   717→            <StatCard
+   219→   718→              label="Stage"
+   220→   719→              value={o.status === "COMPLETED" ? "9/9" : `${Math.max(1, idx + 1)}/9`}
+   221→   720→              sub={PRODUCTION_STAGE_LABELS[o.stage] ?? o.stage}
+   222→   721→              tone="primary"
+   223→   722→            />
+   224→   723→            <StatCard
+   225→   724→              label={o.status === "COMPLETED" ? "Completed On" : "Target Date"}
+   226→   725→              value={o.status === "COMPLETED" ? (o.completedAt ? fmtDateIST(o.completedAt) : "—") : (o.targetDate ? fmtDateIST(o.targetDate) : "—")}
+   227→   726→              sub={isOverdue(o.targetDate, active) ? "Overdue" : undefined}
+   228→   727→              tone={isOverdue(o.targetDate, active) ? "negative" : "default"}
+   229→   728→            />
+   230→   729→          </div>
+   231→   730→
+   232→   731→          {/* Stage progress */}
+   233→   732→          <div className="rounded-lg border p-4">
+   234→   733→            <div className="mb-3 flex items-center justify-between">
+   235→   734→              <p className="text-sm font-semibold">Stage Progress</p>
+   236→   735→              {active && <span className="text-xs text-muted-foreground">{idx + 1} of {STAGES.length} complete</span>}
+   237→   736→            </div>
+   238→   737→            <StageStepper stage={o.stage} status={o.status} />
+   239→   738→
+   240→   739→            {active && canEdit && (
+   241→   740→              <div className="mt-4 space-y-3 border-t pt-4">
+   242→   741→                <div className="flex flex-wrap items-center gap-2">
+   243→   742→                  {nextStage && (
+   244→   743→                    <Button
+   245→   744→                      size="sm"
+   246→   745→                      disabled={stageMut.isPending}
+   247→   746→                      onClick={() => (nextStage === "COMPLETED" ? setConfirmTarget("__ADVANCE__") : stageMut.mutate(undefined))}
+   248→   747→                    >
+   249→   748→                      {stageMut.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ArrowRight className="mr-1.5 h-4 w-4" />}
+   250→   749→                      {nextStage === "COMPLETED" ? "Complete Order" : `Advance to ${PRODUCTION_STAGE_LABELS[nextStage] ?? nextStage}`}
+   251→   750→                    </Button>
+   252→   751→                  )}
+   253→   752→                  {forwardStages.length > 1 && (
+   254→   753→                    <div className="flex items-center gap-2">
+   255→   754→                      <div className="w-48">
+   256→   755→                        <SelectInput value={jumpStage} onChange={setJumpStage} placeholder="Jump to stage…" options={forwardStages} />
+   257→   756→                      </div>
+   258→   757→                      <Button
+   259→   758→                        size="sm" variant="outline"
+   260→   759→                        disabled={!jumpStage || stageMut.isPending}
+   261→   760→                        onClick={() => (jumpStage === "COMPLETED" ? setConfirmTarget("COMPLETED") : stageMut.mutate(jumpStage))}
+   262→   761→                      >
+   263→   762→                        Jump
+   264→   763→                      </Button>
+   265→   764→                    </div>
+   266→   765→                  )}
+   267→   766→                  <Button
+   268→   767→                    size="sm" variant="ghost" className="ml-auto text-destructive hover:bg-destructive/10 hover:text-destructive"
+   269→   768→                    disabled={cancelMut.isPending}
+   270→   769→                    onClick={() => setConfirmTarget("__CANCEL__")}
+   271→   770→                  >
+   272→   771→                    <XCircle className="mr-1.5 h-4 w-4" /> Cancel Order
+   273→   772→                  </Button>
+   274→   773→                </div>
+   275→   774→                {plan.length > 0 && (
+   276→   775→                  <div className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+   277→   776→                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+   278→   777→                    <p>
+   279→   778→                      Reaching <b>Completed</b> adds finished stock automatically:{" "}
+   280→   779→                      {plan.map((l) => `${fmtNum(l.qty)} × ${variantLabel(l.variantId)}`).join(", ")}.
+   281→   780→                    </p>
+   282→   781→                  </div>
+   283→   782→                )}
+   284→   783→              </div>
+   285→   784→            )}
+   286→   785→            {o.status === "CANCELLED" && (
+   287→   786→              <div className="mt-3 flex gap-2 rounded-md border border-red-200 bg-red-50 p-2.5 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+   288→   787→                <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
+   289→   788→                <p>This order was cancelled — no finished stock will be added.</p>
+   290→   789→              </div>
+   291→   790→            )}
+   292→   791→          </div>
+   293→   792→
+   294→   793→          {/* Finished goods plan */}
+   295→   794→          <div className="rounded-lg border p-4">
+   296→   795→            <p className="mb-2 text-sm font-semibold">Finished Goods Plan</p>
+   297→   796→            {plan.length === 0 ? (
+   298→   797→              <p className="text-sm text-muted-foreground">
+   299→   798→                No variant plan on this order — completing it will not add finished stock automatically.
+   300→   799→              </p>
+   301→   800→            ) : (
+   302→   801→              <div className="overflow-hidden rounded-md border">
+   303→   802→                <table className="w-full text-sm">
+   304→   803→                  <thead>
+   305→   804→                    <tr className="border-b bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
+   306→   805→                      <th className="px-3 py-2 font-semibold">Variant</th>
+   307→   806→                      <th className="px-3 py-2 text-right font-semibold">Qty to Stock</th>
+   308→   807→                    </tr>
+   309→   808→                  </thead>
+   310→   809→                  <tbody>
+   311→   810→                    {plan.map((l, i) => (
+   312→   811→                      <tr key={i} className="border-b last:border-0">
+   313→   812→                        <td className="px-3 py-2">{variantLabel(l.variantId)}</td>
+   314→   813→                        <td className="px-3 py-2 text-right tabular-nums font-medium">{fmtNum(l.qty)}</td>
+   315→   814→                      </tr>
+   316→   815→                    ))}
+   317→   816→                    <tr className="bg-muted/30">
+   318→   817→                      <td className="px-3 py-2 text-xs font-medium text-muted-foreground">Total planned</td>
+   319→   818→                      <td className="px-3 py-2 text-right tabular-nums text-xs font-semibold">{fmtNum(plan.reduce((s, l) => s + l.qty, 0))}</td>
+   320→   819→                    </tr>
+   321→   820→                  </tbody>
+   322→   821→                </table>
+   323→   822→              </div>
+   324→   823→            )}
+   325→   824→          </div>
+   326→   825→
+   327→   826→          {/* Info panel */}
+   328→   827→          <div className="rounded-lg border px-4">
+   329→   828→            <InfoRow label="Product" value={productName(o.productId)} />
+   330→   829→            <InfoRow label="Design" value={o.designName ?? "—"} />
+   331→   830→            <InfoRow label="Contractor" value={o.contractor?.name ?? "In-house"} />
+   332→   831→            <InfoRow label="Cost Estimate" value={<Money value={o.costEstimate} />} />
+   333→   832→            <InfoRow label="Started" value={<DateCell value={o.startDate} />} />
+   334→   833→            <InfoRow label="Target Date" value={<DateCell value={o.targetDate} />} />
+   335→   834→            {o.completedAt && <InfoRow label="Completed" value={<DateCell value={o.completedAt} />} />}
+   336→   835→            <InfoRow label="Created By" value={o.createdByName ?? "—"} />
+   337→   836→            {o.notes && <InfoRow label="Notes" value={<span className="font-normal">{o.notes}</span>} />}
+   338→   837→          </div>
+   339→   838→        </div>
+   340→   839→      </SheetContent>
+   341→   840→
+   342→   841→      {/* Completing adds stock — confirm first */}
+   343→   842→      <ConfirmDialog
+   344→   843→        open={confirmTarget === "__ADVANCE__" || confirmTarget === "COMPLETED"}
+   345→   844→        onOpenChange={(v) => !v && setConfirmTarget(null)}
+   346→   845→        title={`Complete ${o.number}?`}
+   347→   846→        description={
+   348→   847→          <>
+   349→   848→            This marks the order as completed and adds finished stock to inventory
+   350→   849→            {plan.length > 0 ? `: ${plan.map((l) => `${fmtNum(l.qty)} × ${variantLabel(l.variantId)}`).join(", ")}.` : "."}
+   351→   850→          </>
+   352→   851→        }
+   353→   852→        confirmLabel="Complete Order"
+   354→   853→        loading={stageMut.isPending}
+   355→   854→        onConfirm={() => { stageMut.mutate(confirmTarget === "COMPLETED" ? "COMPLETED" : undefined); setConfirmTarget(null) }}
+   356→   855→      />
+   357→   856→      <ConfirmDialog
+   358→   857→        open={confirmTarget === "__CANCEL__"}
+   359→   858→        onOpenChange={(v) => !v && setConfirmTarget(null)}
+   360→   859→        title={`Cancel ${o.number}?`}
+   361→   860→        description="The order will be stopped at its current stage. No finished stock will be added."
+   362→   861→        confirmLabel="Cancel Order"
+   363→   862→        destructive
+   364→   863→        loading={cancelMut.isPending}
+   365→   864→        onConfirm={() => { cancelMut.mutate(); setConfirmTarget(null) }}
+   366→   865→      />
+   367→   866→    </Sheet>
+   368→   867→  )
+   369→   868→}
+   370→   869→
+   371→   870→// ==================== NEW PRODUCTION ORDER DIALOG ====================
+   372→   871→function NewProductionOrderDialog({ onClose }: { onClose: () => void }) {
+   373→   872→  const qc = useQueryClient()
+   374→   873→  const { data: productsData, isLoading: productsLoading } = useQuery({
+   375→   874→    queryKey: ["products", "lookup"],
+   376→   875→    queryFn: () => api.get("products?pageSize=200"),
+   377→   876→  })
+   378→   877→  const { data: contractorsData } = useQuery({ queryKey: ["contractors"], queryFn: () => api.get("contractors") })
+   379→   878→
+   380→   879→  const products: ProductLite[] = productsData?.products ?? []
+   381→   880→  const contractors: Contractor[] = contractorsData?.contractors ?? []
+   382→   881→
+   383→   882→  const [form, setForm] = useState({
+   384→   883→    productId: "", designName: "", quantity: 100, contractorId: "", targetDate: "", costEstimate: 0, notes: "",
+   385→   884→  })
+   386→   885→  const [planQty, setPlanQty] = useState<Record<string, number>>({})
+   387→   886→  const [saving, setSaving] = useState(false)
+   388→   887→
+   389→   888→  const product = products.find((p) => p.id === form.productId)
+   390→   889→  const variants = product?.variants ?? []
+   391→   890→  const plannedTotal = Object.values(planQty).reduce((s, n) => s + n, 0)
+   392→   891→  const multiVariant = variants.length > 1
+   393→   892→
+   394→   893→  async function save() {
+   395→   894→    if (!form.productId) return toast({ title: "Product is required", variant: "destructive" })
+   396→   895→    if (!form.quantity || form.quantity < 1) return toast({ title: "Quantity must be at least 1", variant: "destructive" })
+   397→   896→    setSaving(true)
+   398→   897→    try {
+   399→   898→      const body: Record<string, unknown> = {
+   400→   899→        productId: form.productId,
+   401→   900→        quantity: Math.round(form.quantity),
+   402→   901→        designName: form.designName || undefined,
+   403→   902→        contractorId: form.contractorId || undefined,
+   404→   903→        targetDate: form.targetDate || undefined,
+   405→   904→        costEstimate: form.costEstimate || undefined,
+   406→   905→        notes: form.notes || undefined,
+   407→   906→      }
+   408→   907→      if (variants.length === 1) {
+   409→   908→        body.planLines = [{ variantId: variants[0].id, qty: Math.round(form.quantity) }]
+   410→   909→      } else if (multiVariant) {
+   411→   910→        const lines = Object.entries(planQty).filter(([, qty]) => qty > 0).map(([variantId, qty]) => ({ variantId, qty: Math.round(qty) }))
+   412→   911→        if (lines.length) body.planLines = lines
+   413→   912→      }
+   414→   913→      const res = await api.post("production", body)
+   415→   914→      toast({ title: `Production order ${res?.order?.number ?? ""} created`, description: "Track its progress from the Production Orders tab." })
+   416→   915→      qc.invalidateQueries({ queryKey: ["production"] })
+   417→   916→      onClose()
+   418→   917→    } catch (e: any) {
+   419→   918→      toast({ title: "Failed to create order", description: e.message, variant: "destructive" })
+   420→   919→    } finally {
+   421→   920→      setSaving(false)
+   422→   921→    }
+   423→   922→  }
+   424→   923→
+   425→   924→  return (
+   426→   925→    <Dialog open onOpenChange={(v) => !v && onClose()}>
+   427→   926→      <DialogContent className="max-w-lg">
+   428→   927→        <DialogHeader>
+   429→   928→          <DialogTitle>New Production Order</DialogTitle>
+   430→   929→        </DialogHeader>
+   431→   930→        <div className="grid gap-3 sm:grid-cols-2">
+   432→   931→          <div className="sm:col-span-2">
+   433→   932→            <Field label="Product" required hint={productsLoading ? "Loading products…" : undefined}>
+   434→   933→              <EntityPicker
+   435→   934→                entities={products.filter((p) => p.status !== "ARCHIVED")}
+   436→   935→                value={form.productId}
+   437→   936→                onChange={(id) => { setForm({ ...form, productId: id }); setPlanQty({}) }}
+   438→   937→                getLabel={(p: any) => `${p.name}${p.code ? ` (${p.code})` : ""}`}
+   439→   938→                placeholder="Search product…"
+   440→   939→              />
+   441→   940→            </Field>
+   442→   941→          </div>
+   443→   942→          <Field label="Design name" hint="Batch / design reference">
+   444→   943→            <TextInput value={form.designName} onChange={(v) => setForm({ ...form, designName: v })} placeholder="e.g. Festive Batch A" />
+   445→   944→          </Field>
+   446→   945→          <Field label="Quantity (pcs)" required>
+   447→   946→            <NumberInput value={form.quantity} onChange={(v) => setForm({ ...form, quantity: v })} min={1} step="1" />
+   448→   947→          </Field>
+   449→   948→          <div className="sm:col-span-2">
+   450→   949→            <Field label="Contractor" hint="Optional — assign job work later if in-house">
+   451→   950→              <EntityPicker
+   452→   951→                entities={contractors}
+   453→   952→                value={form.contractorId}
+   454→   953→                onChange={(id) => setForm({ ...form, contractorId: id })}
+   455→   954→                getLabel={(c: any) => `${c.name} · ${CONTRACTOR_TYPE_LABELS[c.type] ?? c.type}`}
+   456→   955→                placeholder="Search contractor…"
+   457→   956→              />
+   458→   957→            </Field>
+   459→   958→          </div>
+   460→   959→          <Field label="Target date">
+   461→   960→            <TextInput type="date" value={form.targetDate} onChange={(v) => setForm({ ...form, targetDate: v })} />
+   462→   961→          </Field>
+   463→   962→          <Field label="Cost estimate (₹)">
+   464→   963→            <NumberInput value={form.costEstimate} onChange={(v) => setForm({ ...form, costEstimate: v })} min={0} />
+   465→   964→          </Field>
+   466→   965→
+   467→   966→          {/* Finished goods plan */}
+   468→   967→          <div className="sm:col-span-2 rounded-lg border bg-muted/30 p-3">
+   469→   968→            <p className="mb-2 text-sm font-semibold">Finished Goods Plan</p>
+   470→   969→            {!form.productId ? (
+   471→   970→              <p className="text-xs text-muted-foreground">Pick a product to plan which variants receive finished stock on completion.</p>
+   472→   971→            ) : variants.length === 0 ? (
+   473→   972→              <p className="text-xs text-muted-foreground">This product has no variants — completing the order will not add finished stock automatically.</p>
+   474→   973→            ) : variants.length === 1 ? (
+   475→   974→              <p className="text-xs text-muted-foreground">
+   476→   975→                All <b>{fmtNum(form.quantity)}</b> units will be added to stock as <b>{variantShortLabel(variants[0])}</b> when the order completes.
+   477→   976→              </p>
+   478→   977→            ) : (
+   479→   978→              <div className="space-y-2">
+   480→   979→                <p className="text-xs text-muted-foreground">Split the {fmtNum(form.quantity)} units across variants:</p>
+   481→   980→                <div className="grid max-h-56 gap-2 overflow-y-auto thin-scrollbar sm:grid-cols-2">
+   482→   981→                  {variants.map((v) => (
+   483→   982→                    <Field key={v.id} label={variantShortLabel(v)} hint={v.sku ?? undefined}>
+   484→   983→                      <NumberInput value={planQty[v.id] ?? 0} onChange={(n) => setPlanQty({ ...planQty, [v.id]: n })} min={0} step="1" />
+   485→   984→                    </Field>
+   486→   985→                  ))}
+   487→   986→                </div>
+   488→   987→                <p className={cn("text-xs", plannedTotal !== Math.round(form.quantity) ? "font-medium text-amber-600 dark:text-amber-400" : "text-muted-foreground")}>
+   489→   988→                  Planned {fmtNum(plannedTotal)} of {fmtNum(form.quantity)} units
+   490→   989→                  {plannedTotal !== Math.round(form.quantity) && " — total does not match order quantity"}
+   491→   990→                </p>
+   492→   991→              </div>
+   493→   992→            )}
+   494→   993→          </div>
+   495→   994→
+   496→   995→          <div className="sm:col-span-2">
+   497→   996→            <Field label="Notes">
+   498→   997→              <TextArea value={form.notes} onChange={(v) => setForm({ ...form, notes: v })} rows={2} placeholder="Fabric details, trim instructions…" />
+   499→   998→            </Field>
+   500→   999→          </div>
+   501→  1000→        </div>
+   502→  1001→        <DialogFooter>
+   503→  1002→          <Button variant="outline" onClick={onClose}>Cancel</Button>
+   504→  1003→          <Button onClick={save} disabled={saving}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Create Order</Button>
+   505→  1004→        </DialogFooter>
+   506→  1005→      </DialogContent>
+   507→  1006→    </Dialog>
+   508→  1007→  )
+   509→  1008→}
+   510→  1009→
+   511→  1010→// ==================== TAB: JOB WORK ====================
+   512→  1011→function JobWorkTab({
+   513→  1012→  jobWorks, summary, loading, variantLabel, onOpen, onNew, canCreate,
+   514→  1013→}: {
+   515→  1014→  jobWorks: JobWork[]
+   516→  1015→  summary?: { pending: number; completed: number; outstandingPayable: number }
+   517→  1016→  loading: boolean
+   518→  1017→  variantLabel: (id: string | null | undefined) => string
+   519→  1018→  onOpen: (id: string) => void
+   520→  1019→  onNew: () => void
+   521→  1020→  canCreate: boolean
+   522→  1021→}) {
+   523→  1022→  const [statusFilter, setStatusFilter] = useState("ALL")
+   524→  1023→  const filtered = statusFilter === "ALL" ? jobWorks : jobWorks.filter((j) => j.status === statusFilter)
+   525→  1024→  const activeCount = jobWorks.filter((j) => j.status === "ASSIGNED" || j.status === "PROCESSING").length
+   526→  1025→
+   527→  1026→  const columns: Column<JobWork>[] = [
+   528→  1027→    {
+   529→  1028→      key: "number", header: "Number", width: "w-28",
+   530→  1029→      render: (j) => <span className="font-mono text-xs font-semibold text-muted-foreground">{j.number}</span>,
+   531→  1030→      sortValue: (j) => j.number,
+   532→  1031→    },
+   533→  1032→    {
+   534→  1033→      key: "description", header: "Description",
+   535→  1034→      render: (j) => (
+   536→  1035→        <div className="min-w-0 max-w-[260px]">
+   537→  1036→          <p className="truncate font-medium">{j.description}</p>
+   538→  1037→          {j.variantId && <p className="truncate text-xs text-muted-foreground">{variantLabel(j.variantId)}</p>}
+   539→  1038→        </div>
+   540→  1039→      ),
+   541→  1040→    },
+   542→  1041→    { key: "contractor.name", header: "Contractor", render: (j) => j.contractor?.name ?? "—", sortValue: (j) => j.contractor?.name ?? "" },
+   543→  1042→    {
+   544→  1043→      key: "progress", header: "Progress", width: "w-32",
+   545→  1044→      render: (j) => {
+   546→  1045→        const pct = j.quantity > 0 ? Math.round((j.completedQty / j.quantity) * 100) : 0
+   547→  1046→        return (
+   548→  1047→          <div>
+   549→  1048→            <div className="mb-1 flex items-center justify-between text-xs tabular-nums">
+   550→  1049→              <span className="font-medium">{j.completedQty}/{j.quantity}</span>
+   551→  1050→              <span className="text-muted-foreground">{pct}%</span>
+   552→  1051→            </div>
+   553→  1052→            <Progress value={pct} className="h-1.5" />
+   554→  1053→          </div>
+   555→  1054→        )
+   556→  1055→      },
+   557→  1056→      sortValue: (j) => (j.quantity > 0 ? j.completedQty / j.quantity : 0),
+   558→  1057→    },
+   559→  1058→    { key: "rate", header: "Rate/pc", align: "right", render: (j) => fmtMoney(j.rate), sortValue: (j) => j.rate },
+   560→  1059→    { key: "totalAmount", header: "Earned", align: "right", render: (j) => <Money value={j.totalAmount} />, sortValue: (j) => j.totalAmount },
+   561→
+   562→[showing lines 500-1059 of 2231; use offset=1060 with limit to continue reading]

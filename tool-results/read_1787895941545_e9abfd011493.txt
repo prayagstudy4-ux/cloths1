@@ -1,0 +1,1310 @@
+     1→     1→"use client"
+     2→     2→
+     3→     3→import { useEffect, useMemo, useState } from "react"
+     4→     4→import { useQuery, useQueryClient } from "@tanstack/react-query"
+     5→     5→import { api, qs } from "@/lib/client/api"
+     6→     6→import { canDo, useApp } from "@/lib/client/store"
+     7→     7→import { PageHeader, StatCard, EmptyState } from "@/components/shared/basics"
+     8→     8→import { DataTable, exportCSV, Column } from "@/components/shared/DataTable"
+     9→     9→import { StatusBadge, Money, DateCell, ConfirmDialog, Field, TextInput, SelectInput, TextArea, NumberInput } from "@/components/shared/fields"
+    10→    10→import { Button } from "@/components/ui/button"
+    11→    11→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+    12→    12→import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+    13→    13→import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+    14→    14→import { Input } from "@/components/ui/input"
+    15→    15→import { cn } from "@/lib/utils"
+    16→    16→import { fmtMoney, fmtDateIST, ymdIST } from "@/lib/format"
+    17→    17→import {
+    18→    18→  ATTENDANCE_STATUSES, ATTENDANCE_STATUS_LABELS,
+    19→    19→  PAYMENT_METHODS, PAYMENT_METHOD_LABELS,
+    20→    20→  SALARY_PAYMENT_TYPES, SALARY_PAYMENT_TYPE_LABELS,
+    21→    21→  TASK_PRIORITIES, TASK_PRIORITY_LABELS, TASK_PRIORITY_COLORS,
+    22→    22→  TASK_STATUSES, TASK_STATUS_LABELS,
+    23→    23→} from "@/lib/constants"
+    24→    24→import { toast } from "@/hooks/use-toast"
+    25→    25→import {
+    26→    26→  IdCard, Users, UserCheck, UserX, UserPlus, IndianRupee, CalendarCheck, CalendarDays, CalendarClock,
+    27→    27→  ListTodo, Pencil, Trash2, Loader2, Play, CheckCircle2, RotateCcw, Download, Phone, MapPin,
+    28→    28→  Briefcase, Wallet, CheckCheck, AlertTriangle,
+    29→    29→} from "lucide-react"
+    30→    30→
+    31→    31→// ==================== Types ====================
+    32→    32→interface Employee {
+    33→    33→  id: string; code: string; name: string; phone: string | null
+    34→    34→  designation: string | null; joiningDate: string | null; salary: number
+    35→    35→  status: string; address: string | null; notes: string | null; createdAt: string
+    36→    36→  todayAttendance?: string | null
+    37→    37→}
+    38→    38→
+    39→    39→interface AttendanceRecord {
+    40→    40→  id: string; employeeId: string; date: string; status: string; note: string | null
+    41→    41→}
+    42→    42→
+    43→    43→interface SalaryPayment {
+    44→    44→  id: string; employeeId: string; type: string; month: string | null
+    45→    45→  amount: number; method: string; date: string; notes: string | null; createdAt: string
+    46→    46→}
+    47→    47→
+    48→    48→interface Task {
+    49→    49→  id: string; title: string; description: string | null; assignedTo: string | null
+    50→    50→  priority: string; dueDate: string | null; status: string
+    51→    51→  createdByName: string | null; createdAt: string; completedAt: string | null
+    52→    52→}
+    53→    53→
+    54→    54→// ==================== Local style maps ====================
+    55→    55→const ATTENDANCE_BADGE_COLORS: Record<string, string> = {
+    56→    56→  PRESENT: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
+    57→    57→  ABSENT: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300",
+    58→    58→  HALF_DAY: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
+    59→    59→  LEAVE: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300",
+    60→    60→}
+    61→    61→
+    62→    62→const ATTENDANCE_DOT_COLORS: Record<string, string> = {
+    63→    63→  PRESENT: "bg-emerald-500",
+    64→    64→  ABSENT: "bg-red-500",
+    65→    65→  HALF_DAY: "bg-amber-500",
+    66→    66→  LEAVE: "bg-sky-500",
+    67→    67→}
+    68→    68→
+    69→    69→const SALARY_TYPE_BADGE_COLORS: Record<string, string> = {
+    70→    70→  SALARY: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
+    71→    71→  ADVANCE: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
+    72→    72→  BONUS: "bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300",
+    73→    73→  DEDUCTION: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300",
+    74→    74→}
+    75→    75→
+    76→    76→const TASK_STATUS_BADGE_COLORS: Record<string, string> = {
+    77→    77→  PENDING: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
+    78→    78→  IN_PROGRESS: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
+    79→    79→  COMPLETED: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
+    80→    80→  CANCELLED: "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400",
+    81→    81→}
+    82→    82→
+    83→    83→// ==================== Helpers ====================
+    84→    84→/** Current IST month as YYYY-MM, offset by n months */
+    85→    85→function ymIST(offsetMonths = 0): string {
+    86→    86→  const [y, m] = ymdIST().split("-").map(Number)
+    87→    87→  let year = y, month = m + offsetMonths
+    88→    88→  while (month < 1) { month += 12; year -= 1 }
+    89→    89→  while (month > 12) { month -= 12; year += 1 }
+    90→    90→  return `${year}-${String(month).padStart(2, "0")}`
+    91→    91→}
+    92→    92→
+    93→    93→function isTaskOverdue(t: Task): boolean {
+    94→    94→  if (!t.dueDate || t.status === "COMPLETED" || t.status === "CANCELLED") return false
+    95→    95→  return fmtDateIST(t.dueDate, "yyyy-MM-dd") < ymdIST()
+    96→    96→}
+    97→    97→
+    98→    98→// ==================== MAIN MODULE ====================
+    99→    99→export function StaffModule() {
+   100→   100→  const { moduleParams } = useApp()
+   101→   101→  const initialTab =
+   102→   102→    moduleParams?.tab === "attendance" || moduleParams?.tab === "tasks" ? String(moduleParams.tab) : "employees"
+   103→   103→  const [tab, setTab] = useState(initialTab)
+   104→   104→  const [detailId, setDetailId] = useState<string | null>(
+   105→   105→    initialTab === "employees" ? ((moduleParams?.entityId as string) ?? null) : null,
+   106→   106→  )
+   107→   107→  const [creatingEmployee, setCreatingEmployee] = useState<boolean>(!!moduleParams?.new && initialTab === "employees")
+   108→   108→  const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null)
+   109→   109→
+   110→   110→  const { data: staffData, isLoading: staffLoading } = useQuery({
+   111→   111→    queryKey: ["staff"],
+   112→   112→    queryFn: () => api.get("staff"),
+   113→   113→  })
+   114→   114→
+   115→   115→  const employees: Employee[] = staffData?.employees ?? []
+   116→   116→  const activeEmployees = useMemo(() => employees.filter((e) => e.status === "ACTIVE"), [employees])
+   117→   117→  const monthlySalaryCost = activeEmployees.reduce((s, e) => s + (e.salary ?? 0), 0)
+   118→   118→  const presentToday = activeEmployees.filter((e) => e.todayAttendance === "PRESENT").length
+   119→   119→  const markedToday = activeEmployees.filter((e) => e.todayAttendance).length
+   120→   120→  const detailEmployee = detailId ? (employees.find((e) => e.id === detailId) ?? null) : null
+   121→   121→
+   122→   122→  function exportStaffCsv() {
+   123→   123→    exportCSV(
+   124→   124→      "employees",
+   125→   125→      ["Code", "Name", "Designation", "Phone", "Joined", "Salary", "Status", "Today"],
+   126→   126→      employees.map((e) => [
+   127→   127→        e.code, e.name, e.designation ?? "", e.phone ?? "",
+   128→   128→        e.joiningDate ? fmtDateIST(e.joiningDate) : "", e.salary, e.status,
+   129→   129→        e.todayAttendance ? (ATTENDANCE_STATUS_LABELS[e.todayAttendance] ?? e.todayAttendance) : "Not Marked",
+   130→   130→      ]),
+   131→   131→    )
+   132→   132→  }
+   133→   133→
+   134→   134→  const columns: Column<Employee>[] = [
+   135→   135→    { key: "code", header: "Code", width: "w-16", render: (e) => <span className="text-xs text-muted-foreground">{e.code}</span> },
+   136→   136→    {
+   137→   137→      key: "name", header: "Employee", render: (e) => (
+   138→   138→        <div className="flex items-center gap-2">
+   139→   139→          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+   140→   140→            {e.name?.[0]?.toUpperCase()}
+   141→   141→          </div>
+   142→   142→          <span className="truncate font-medium">{e.name}</span>
+   143→   143→        </div>
+   144→   144→      ),
+   145→   145→    },
+   146→   146→    { key: "designation", header: "Designation", render: (e) => <span className="text-muted-foreground">{e.designation ?? "—"}</span> },
+   147→   147→    { key: "phone", header: "Phone", render: (e) => <span className="tabular-nums">{e.phone ?? "—"}</span> },
+   148→   148→    { key: "joiningDate", header: "Joined", sortValue: (e) => e.joiningDate ?? "", render: (e) => <DateCell value={e.joiningDate} /> },
+   149→   149→    {
+   150→   150→      key: "salary", header: "Salary", align: "right", sortValue: (e) => e.salary,
+   151→   151→      render: (e) => (e.salary > 0 ? <Money value={e.salary} /> : <span className="text-muted-foreground">—</span>),
+   152→   152→    },
+   153→   153→    {
+   154→   154→      key: "status", header: "Status", render: (e) => (
+   155→   155→        <StatusBadge
+   156→   156→          label={e.status === "ACTIVE" ? "Active" : "Inactive"}
+   157→   157→          className={e.status === "ACTIVE"
+   158→   158→            ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+   159→   159→            : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"}
+   160→   160→        />
+   161→   161→      ),
+   162→   162→    },
+   163→   163→    {
+   164→   164→      key: "todayAttendance", header: "Today", render: (e) => e.todayAttendance
+   165→   165→        ? <StatusBadge label={ATTENDANCE_STATUS_LABELS[e.todayAttendance] ?? e.todayAttendance} className={ATTENDANCE_BADGE_COLORS[e.todayAttendance]} />
+   166→   166→        : <span className="text-xs text-muted-foreground">—</span>,
+   167→   167→    },
+   168→   168→  ]
+   169→   169→
+   170→   170→  return (
+   171→   171→    <div className="space-y-4">
+   172→   172→      <PageHeader
+   173→   173→        icon={<IdCard className="h-5 w-5" />}
+   174→   174→        title="Staff & Workers"
+   175→   175→        description="Employee master, daily attendance, salary & advance payouts and the shop task board."
+   176→   176→        actions={
+   177→   177→          tab === "employees" ? (
+   178→   178→            <>
+   179→   179→              <Button variant="outline" size="sm" onClick={exportStaffCsv} disabled={employees.length === 0}>
+   180→   180→                <Download className="mr-1.5 h-4 w-4" /> Export CSV
+   181→   181→              </Button>
+   182→   182→              {canDo("staff", "create") && (
+   183→   183→                <Button size="sm" onClick={() => setCreatingEmployee(true)}>
+   184→   184→                  <UserPlus className="mr-1.5 h-4 w-4" /> New Employee
+   185→   185→                </Button>
+   186→   186→              )}
+   187→   187→            </>
+   188→   188→          ) : undefined
+   189→   189→        }
+   190→   190→      />
+   191→   191→
+   192→   192→      <Tabs value={tab} onValueChange={setTab}>
+   193→   193→        <TabsList className="h-auto w-full flex-wrap justify-start overflow-x-auto">
+   194→   194→          <TabsTrigger value="employees" className="px-3">Employees</TabsTrigger>
+   195→   195→          <TabsTrigger value="attendance" className="px-3">Attendance</TabsTrigger>
+   196→   196→          <TabsTrigger value="tasks" className="px-3">Tasks</TabsTrigger>
+   197→   197→        </TabsList>
+   198→   198→
+   199→   199→        {/* ==================== TAB: EMPLOYEES ==================== */}
+   200→   200→        <TabsContent value="employees" className="mt-4 space-y-4">
+   201→   201→          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+   202→   202→            <StatCard
+   203→   203→              label="Active Staff"
+   204→   204→              value={staffLoading ? "…" : activeEmployees.length}
+   205→   205→              sub={`${employees.length} on payroll`}
+   206→   206→              icon={<Users className="h-4 w-4" />}
+   207→   207→            />
+   208→   208→            <StatCard
+   209→   209→              label="Present Today"
+   210→   210→              value={staffLoading ? "…" : presentToday}
+   211→   211→              sub={`${markedToday} of ${activeEmployees.length} marked`}
+   212→   212→              tone="positive"
+   213→   213→              icon={<UserCheck className="h-4 w-4" />}
+   214→   214→            />
+   215→   215→            <StatCard
+   216→   216→              label="Monthly Salary Cost"
+   217→   217→              value={fmtMoney(monthlySalaryCost)}
+   218→   218→              sub="active payroll"
+   219→   219→              icon={<IndianRupee className="h-4 w-4" />}
+   220→   220→            />
+   221→   221→            <StatCard
+   222→   222→              label="Unmarked Today"
+   223→   223→              value={staffLoading ? "…" : Math.max(0, activeEmployees.length - markedToday)}
+   224→   224→              sub="attendance pending"
+   225→   225→              tone={activeEmployees.length - markedToday > 0 ? "warning" : "default"}
+   226→   226→              icon={<CalendarClock className="h-4 w-4" />}
+   227→   227→            />
+   228→   228→          </div>
+   229→   229→
+   230→   230→          <DataTable
+   231→   231→            columns={columns}
+   232→   232→            rows={employees}
+   233→   233→            loading={staffLoading}
+   234→   234→            searchKeys={["code", "name", "phone", "designation"]}
+   235→   235→            searchPlaceholder="Search name, code, phone, designation…"
+   236→   236→            onRowClick={(e) => setDetailId(e.id)}
+   237→   237→            emptyTitle="No employees yet"
+   238→   238→            emptyDescription="Add your first employee to start tracking attendance, salary and advances."
+   239→   239→            emptyAction={canDo("staff", "create") ? (
+   240→   240→              <Button size="sm" onClick={() => setCreatingEmployee(true)}>
+   241→   241→                <UserPlus className="mr-1.5 h-4 w-4" /> New Employee
+   242→   242→              </Button>
+   243→   243→            ) : undefined}
+   244→   244→            rowClassName={(e) => (e.status === "INACTIVE" ? "opacity-60" : "")}
+   245→   245→          />
+   246→   246→        </TabsContent>
+   247→   247→
+   248→   248→        {/* ==================== TAB: ATTENDANCE ==================== */}
+   249→   249→        <TabsContent value="attendance" className="mt-4">
+   250→   250→          <AttendanceTab employees={activeEmployees} loading={staffLoading} />
+   251→   251→        </TabsContent>
+   252→   252→
+   253→   253→        {/* ==================== TAB: TASKS ==================== */}
+   254→   254→        <TabsContent value="tasks" className="mt-4">
+   255→   255→          <TasksTab
+   256→   256→            employees={activeEmployees}
+   257→   257→            focusId={initialTab === "tasks" ? ((moduleParams?.entityId as string) ?? null) : null}
+   258→   258→            autoNew={!!moduleParams?.new && initialTab === "tasks"}
+   259→   259→          />
+   260→   260→        </TabsContent>
+   261→   261→      </Tabs>
+   262→   262→
+   263→   263→      {creatingEmployee && <EmployeeForm onClose={() => setCreatingEmployee(false)} />}
+   264→   264→      {editingEmployee && <EmployeeForm employee={editingEmployee} onClose={() => setEditingEmployee(null)} />}
+   265→   265→      {detailId && (
+   266→   266→        <EmployeeDetailSheet
+   267→   267→          employeeId={detailId}
+   268→   268→          employee={detailEmployee}
+   269→   269→          notFound={!staffLoading && !detailEmployee}
+   270→   270→          onClose={() => setDetailId(null)}
+   271→   271→          onEdit={(e) => { setDetailId(null); setEditingEmployee(e) }}
+   272→   272→          onMarkAttendance={() => { setDetailId(null); setTab("attendance") }}
+   273→   273→        />
+   274→   274→      )}
+   275→   275→    </div>
+   276→   276→  )
+   277→   277→}
+   278→   278→
+   279→   279→// ==================== EMPLOYEE FORM (create / edit) ====================
+   280→   280→function EmployeeForm({ employee, onClose }: { employee?: Employee; onClose: () => void }) {
+   281→   281→  const qc = useQueryClient()
+   282→   282→  const [saving, setSaving] = useState(false)
+   283→   283→  const [form, setForm] = useState({
+   284→   284→    name: employee?.name ?? "",
+   285→   285→    phone: employee?.phone ?? "",
+   286→   286→    designation: employee?.designation ?? "",
+   287→   287→    joiningDate: employee?.joiningDate ? fmtDateIST(employee.joiningDate, "yyyy-MM-dd") : ymdIST(),
+   288→   288→    salary: employee?.salary ?? 0,
+   289→   289→    address: employee?.address ?? "",
+   290→   290→    notes: employee?.notes ?? "",
+   291→   291→  })
+   292→   292→
+   293→   293→  async function save() {
+   294→   294→    if (!form.name.trim()) return toast({ title: "Name is required", variant: "destructive" })
+   295→   295→    setSaving(true)
+   296→   296→    try {
+   297→   297→      const payload = {
+   298→   298→        name: form.name.trim(),
+   299→   299→        phone: form.phone.trim(),
+   300→   300→        designation: form.designation.trim(),
+   301→   301→        joiningDate: form.joiningDate || undefined,
+   302→   302→        salary: form.salary,
+   303→   303→        address: form.address.trim(),
+   304→   304→        notes: form.notes.trim(),
+   305→   305→      }
+   306→   306→      if (employee) await api.put(`staff/${employee.id}`, payload)
+   307→   307→      else await api.post("staff", payload)
+   308→   308→      toast({
+   309→   309→        title: employee ? "Employee updated" : "Employee created",
+   310→   310→        description: `${form.name.trim()}${form.designation.trim() ? ` · ${form.designation.trim()}` : ""}`,
+   311→   311→      })
+   312→   312→      qc.invalidateQueries({ queryKey: ["staff"] })
+   313→   313→      onClose()
+   314→   314→    } catch (e: any) {
+   315→   315→      toast({ title: "Failed to save employee", description: e.message, variant: "destructive" })
+   316→   316→    } finally {
+   317→   317→      setSaving(false)
+   318→   318→    }
+   319→   319→  }
+   320→   320→
+   321→   321→  return (
+   322→   322→    <Dialog open onOpenChange={(v) => !v && onClose()}>
+   323→   323→      <DialogContent className="max-w-lg">
+   324→   324→        <DialogHeader>
+   325→   325→          <DialogTitle>{employee ? `Edit ${employee.name}` : "New Employee"}</DialogTitle>
+   326→   326→        </DialogHeader>
+   327→   327→        <div className="grid gap-3 sm:grid-cols-2">
+   328→   328→          <div className="sm:col-span-2">
+   329→   329→            <Field label="Full name" required>
+   330→   330→              <TextInput value={form.name} onChange={(v) => setForm({ ...form, name: v })} placeholder="Employee name" autoFocus />
+   331→   331→            </Field>
+   332→   332→          </div>
+   333→   333→          <Field label="Phone">
+   334→   334→            <TextInput value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} placeholder="98XXXXXXXX" />
+   335→   335→          </Field>
+   336→   336→          <Field label="Designation" hint="e.g. Sales Person, Tailor, Helper">
+   337→   337→            <TextInput value={form.designation} onChange={(v) => setForm({ ...form, designation: v })} placeholder="Designation" />
+   338→   338→          </Field>
+   339→   339→          <Field label="Joining date" hint={employee ? "Server keeps the original joining date for now" : undefined}>
+   340→   340→            <TextInput type="date" value={form.joiningDate} onChange={(v) => setForm({ ...form, joiningDate: v })} />
+   341→   341→          </Field>
+   342→   342→          <Field label="Monthly salary (₹)">
+   343→   343→            <NumberInput value={form.salary} onChange={(v) => setForm({ ...form, salary: v })} min={0} />
+   344→   344→          </Field>
+   345→   345→          <div className="sm:col-span-2">
+   346→   346→            <Field label="Address">
+   347→   347→              <TextInput value={form.address} onChange={(v) => setForm({ ...form, address: v })} placeholder="Street, city…" />
+   348→   348→            </Field>
+   349→   349→          </div>
+   350→   350→          <div className="sm:col-span-2">
+   351→   351→            <Field label="Notes">
+   352→   352→              <TextArea value={form.notes} onChange={(v) => setForm({ ...form, notes: v })} rows={2} placeholder="Remarks, skills, references…" />
+   353→   353→            </Field>
+   354→   354→          </div>
+   355→   355→        </div>
+   356→   356→        <DialogFooter>
+   357→   357→          <Button variant="outline" onClick={onClose}>Cancel</Button>
+   358→   358→          <Button onClick={save} disabled={saving}>
+   359→   359→            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Save
+   360→   360→          </Button>
+   361→   361→        </DialogFooter>
+   362→   362→      </DialogContent>
+   363→   363→    </Dialog>
+   364→   364→  )
+   365→   365→}
+   366→   366→
+   367→   367→// ==================== EMPLOYEE DETAIL SHEET ====================
+   368→   368→function EmployeeDetailSheet({
+   369→   369→  employeeId, employee, notFound, onClose, onEdit, onMarkAttendance,
+   370→   370→}: {
+   371→   371→  employeeId: string
+   372→   372→  employee: Employee | null
+   373→   373→  notFound?: boolean
+   374→   374→  onClose: () => void
+   375→   375→  onEdit: (e: Employee) => void
+   376→   376→  onMarkAttendance: () => void
+   377→   377→}) {
+   378→   378→  const qc = useQueryClient()
+   379→   379→  const [payOpen, setPayOpen] = useState(false)
+   380→   380→  const [deactivateOpen, setDeactivateOpen] = useState(false)
+   381→   381→  const [togglingStatus, setTogglingStatus] = useState(false)
+   382→   382→
+   383→   383→  // Salary / advance history (documented endpoint: GET staff/payments?employeeId=)
+   384→   384→  const { data: payData, isLoading: payLoading } = useQuery({
+   385→   385→    queryKey: ["staff", "payments", employeeId],
+   386→   386→    queryFn: () => api.get(`staff/payments${qs({ employeeId })}`),
+   387→   387→  })
+   388→   388→
+   389→   389→  // Recent attendance = current + previous month via GET staff/attendance?month=
+   390→   390→  const curMonth = useMemo(() => ymIST(0), [])
+   391→   391→  const prevMonth = useMemo(() => ymIST(-1), [])
+   392→   392→  const { data: attCur } = useQuery({
+   393→   393→    queryKey: ["staff", "attendance", "month", curMonth],
+   394→   394→    queryFn: () => api.get(`staff/attendance${qs({ month: curMonth })}`),
+   395→   395→  })
+   396→   396→  const { data: attPrev } = useQuery({
+   397→   397→    queryKey: ["staff", "attendance", "month", prevMonth],
+   398→   398→    queryFn: () => api.get(`staff/attendance${qs({ month: prevMonth })}`),
+   399→   399→  })
+   400→   400→
+   401→   401→  const attendanceRecords: AttendanceRecord[] = useMemo(() => {
+   402→   402→    const all: AttendanceRecord[] = [...(attCur?.records ?? []), ...(attPrev?.records ?? [])]
+   403→   403→    return all
+   404→   404→      .filter((r) => r.employeeId === employeeId)
+   405→   405→      .sort((a, b) => b.date.localeCompare(a.date))
+   406→   406→      .slice(0, 60)
+   407→   407→  }, [attCur, attPrev, employeeId])
+   408→   408→
+   409→   409→  const payments: SalaryPayment[] = payData?.payments ?? []
+   410→   410→  const presentCount = attendanceRecords.filter((r) => r.status === "PRESENT").length
+   411→   411→  const totalPaid = payments.reduce((s, p) => s + Math.max(0, p.amount), 0)
+   412→   412→  const advanceTotal = payments.filter((p) => p.type === "ADVANCE").reduce((s, p) => s + p.amount, 0)
+   413→   413→
+   414→   414→  async function updateStatus(id: string, status: "ACTIVE" | "INACTIVE") {
+   415→   415→    setTogglingStatus(true)
+   416→   416→    try {
+   417→   417→      await api.put(`staff/${id}`, { status })
+   418→   418→      toast({
+   419→   419→        title: status === "INACTIVE" ? "Employee deactivated" : "Employee reactivated",
+   420→   420→        description: employee?.name ?? "",
+   421→   421→      })
+   422→   422→      qc.invalidateQueries({ queryKey: ["staff"] })
+   423→   423→      if (status === "INACTIVE") onClose()
+   424→   424→    } catch (e: any) {
+   425→   425→      toast({ title: "Could not update employee", description: e.message, variant: "destructive" })
+   426→   426→    } finally {
+   427→   427→      setTogglingStatus(false)
+   428→   428→      setDeactivateOpen(false)
+   429→   429→    }
+   430→   430→  }
+   431→   431→
+   432→   432→  if (!employee) {
+   433→   433→    return (
+   434→   434→      <Sheet open onOpenChange={(v) => !v && onClose()}>
+   435→   435→        <SheetContent side="right" className="w-full overflow-y-auto p-0 sm:max-w-2xl thin-scrollbar">
+   436→   436→          <SheetHeader className="border-b bg-muted/40 px-5 py-4">
+   437→   437→            <SheetTitle>Employee</SheetTitle>
+   438→   438→          </SheetHeader>
+   439→   439→          <div className="flex items-center justify-center py-24">
+   440→   440→            {notFound ? (
+   441→   441→              <EmptyState
+   442→   442→                title="Employee not found"
+   443→   443→                description="This employee may have been removed. Close and refresh the list."
+   444→   444→                action={<Button size="sm" variant="outline" onClick={onClose}>Close</Button>}
+   445→   445→              />
+   446→   446→            ) : (
+   447→   447→              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+   448→   448→            )}
+   449→   449→          </div>
+   450→   450→        </SheetContent>
+   451→   451→      </Sheet>
+   452→   452→    )
+   453→   453→  }
+   454→   454→
+   455→   455→  return (
+   456→   456→    <Sheet open onOpenChange={(v) => !v && onClose()}>
+   457→   457→      <SheetContent side="right" className="w-full overflow-y-auto p-0 sm:max-w-2xl thin-scrollbar">
+   458→   458→        <SheetHeader className="border-b bg-muted/40 px-5 py-4">
+   459→   459→          <SheetTitle className="flex items-center gap-3">
+   460→   460→            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-lg font-bold text-primary-foreground">
+   461→   461→              {employee.name?.[0]?.toUpperCase() ?? "?"}
+   462→   462→            </div>
+   463→   463→            <div className="min-w-0">
+   464→   464→              <p className="truncate text-lg font-semibold">{employee.name}</p>
+   465→   465→              <p className="text-xs font-normal text-muted-foreground">
+   466→   466→                {employee.code}{employee.designation ? ` · ${employee.designation}` : ""}
+   467→   467→                {employee.status === "INACTIVE" ? " · Inactive" : ""}
+   468→   468→              </p>
+   469→   469→            </div>
+   470→   470→          </SheetTitle>
+   471→   471→        </SheetHeader>
+   472→   472→
+   473→   473→        <div className="space-y-5 p-5">
+   474→   474→          {/* Stats */}
+   475→   475→          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+   476→   476→            <StatCard label="Monthly Salary" value={fmtMoney(employee.salary)} sub="current rate" />
+   477→   477→            <StatCard label="Present Days" value={presentCount} sub="last 2 months" tone="positive" />
+   478→   478→            <StatCard label="Total Paid Out" value={fmtMoney(totalPaid)} sub={`${payments.length} payments`} />
+   479→   479→            <StatCard label="Advances" value={fmtMoney(advanceTotal)} sub="recoverable" tone={advanceTotal > 0 ? "warning" : "default"} />
+   480→   480→          </div>
+   481→   481→
+   482→   482→          {/* Actions */}
+   483→   483→          <div className="flex flex-wrap gap-2">
+   484→   484→            <Button size="sm" variant="outline" onClick={onMarkAttendance}>
+   485→   485→              <CalendarCheck className="mr-1.5 h-4 w-4" /> Mark Attendance
+   486→   486→            </Button>
+   487→   487→            {canDo("staff", "pay") && (
+   488→   488→              <Button size="sm" onClick={() => setPayOpen(true)}>
+   489→   489→                <Wallet className="mr-1.5 h-4 w-4" /> Pay Salary / Advance
+   490→   490→              </Button>
+   491→   491→            )}
+   492→   492→            {canDo("staff", "edit") && (
+   493→   493→              <Button size="sm" variant="outline" onClick={() => onEdit(employee)}>
+   494→   494→                <Pencil className="mr-1.5 h-4 w-4" /> Edit
+   495→   495→              </Button>
+   496→   496→            )}
+   497→   497→            {employee.status === "ACTIVE"
+   498→   498→              ? canDo("staff", "delete") && (
+   499→   499→                  <Button size="sm" variant="outline" className="text-destructive hover:text-destructive" onClick={() => setDeactivateOpen(true)}>
+   500→   500→                    <UserX className="mr-1.5 h-4 w-4" /> Deactivate
+   501→   501→                  </Button>
+   502→   502→                )
+   503→   503→              : canDo("staff", "edit") && (
+   504→   504→                  <Button size="sm" variant="outline" onClick={() => updateStatus(employee.id, "ACTIVE")} disabled={togglingStatus}>
+   505→   505→                    <UserCheck className="mr-1.5 h-4 w-4" /> Reactivate
+   506→   506→                  </Button>
+   507→   507→                )}
+   508→   508→          </div>
+   509→   509→
+   510→   510→          {/* Info */}
+   511→   511→          <div className="grid gap-2 rounded-lg border p-4 text-sm sm:grid-cols-2">
+   512→   512→            <span className="flex items-center gap-2 text-muted-foreground"><Phone className="h-3.5 w-3.5 shrink-0" /> {employee.phone ?? "—"}</span>
+   513→   513→            <span className="flex items-center gap-2 text-muted-foreground"><Briefcase className="h-3.5 w-3.5 shrink-0" /> {employee.designation ?? "—"}</span>
+   514→   514→            <span className="flex items-center gap-2 text-muted-foreground">
+   515→   515→              <CalendarDays className="h-3.5 w-3.5 shrink-0" /> Joined <DateCell value={employee.joiningDate} />
+   516→   516→            </span>
+   517→   517→            <span className="flex items-center gap-2 text-muted-foreground"><IdCard className="h-3.5 w-3.5 shrink-0" /> {employee.code}</span>
+   518→   518→            {employee.address && (
+   519→   519→              <span className="col-span-2 flex items-start gap-2 text-muted-foreground">
+   520→   520→                <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {employee.address}
+   521→   521→              </span>
+   522→   522→            )}
+   523→   523→            {employee.notes && <p className="col-span-2 rounded bg-muted p-2 text-xs">{employee.notes}</p>}
+   524→   524→          </div>
+   525→   525→
+   526→   526→          {/* Tabs: attendance + payments */}
+   527→   527→          <Tabs defaultValue="attendance">
+   528→   528→            <TabsList className="w-full justify-start overflow-x-auto flex-wrap h-auto">
+   529→   529→              <TabsTrigger value="attendance">Attendance ({attendanceRecords.length})</TabsTrigger>
+   530→   530→              <TabsTrigger value="payments">Salary Payments ({payments.length})</TabsTrigger>
+   531→   531→            </TabsList>
+   532→   532→
+   533→   533→            <TabsContent value="attendance" className="mt-3">
+   534→   534→              {attendanceRecords.length === 0 ? (
+   535→   535→                <EmptyState title="No attendance records" description="Attendance from the last two months will appear here." />
+   536→   536→              ) : (
+   537→   537→                <div className="max-h-96 overflow-y-auto rounded-lg border thin-scrollbar">
+   538→   538→                  <table className="w-full text-sm">
+   539→   539→                    <thead className="sticky top-0 z-10 bg-muted">
+   540→   540→                      <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
+   541→   541→                        <th className="px-3 py-2 font-semibold">Date</th>
+   542→   542→                        <th className="px-3 py-2 font-semibold">Status</th>
+   543→   543→                        <th className="px-3 py-2 font-semibold">Note</th>
+   544→   544→                      </tr>
+   545→   545→                    </thead>
+   546→   546→                    <tbody>
+   547→   547→                      {attendanceRecords.map((r) => (
+   548→   548→                        <tr key={r.id} className="border-b last:border-0">
+   549→   549→                          <td className="whitespace-nowrap px-3 py-2 text-xs"><DateCell value={r.date} /></td>
+   550→   550→                          <td className="px-3 py-2">
+   551→   551→                            <StatusBadge label={ATTENDANCE_STATUS_LABELS[r.status] ?? r.status} className={ATTENDANCE_BADGE_COLORS[r.status]} />
+   552→   552→                          </td>
+   553→   553→                          <td className="px-3 py-2 text-xs text-muted-foreground">{r.note ?? "—"}</td>
+   554→   554→                        </tr>
+   555→   555→                      ))}
+   556→   556→                    </tbody>
+   557→   557→                  </table>
+   558→   558→                </div>
+   559→   559→              )}
+   560→   560→            </TabsContent>
+   561→   561→
+   562→   562→            <TabsContent value="payments" className="mt-3 space-y-3">
+   563→   563→              {canDo("staff", "pay") && (
+   564→   564→                <div className="flex justify-end">
+   565→   565→                  <Button size="sm" variant="outline" onClick={() => setPayOpen(true)}>
+   566→   566→                    <Wallet className="mr-1.5 h-4 w-4" /> New Payment
+   567→   567→                  </Button>
+   568→   568→                </div>
+   569→   569→              )}
+   570→   570→              {payLoading ? (
+   571→   571→                <div className="flex items-center justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+   572→   572→              ) : payments.length === 0 ? (
+   573→   573→                <EmptyState title="No salary payments" description="Pay salary, advance or bonus — it will be recorded here and in accounts." />
+   574→   574→              ) : (
+   575→   575→                <div className="max-h-96 overflow-y-auto rounded-lg border thin-scrollbar">
+   576→   576→                  <table className="w-full text-sm">
+   577→   577→                    <thead className="sticky top-0 z-10 bg-muted">
+   578→   578→                      <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
+   579→   579→                        <th className="px-3 py-2 font-semibold">Date</th>
+   580→   580→                        <th className="px-3 py-2 font-semibold">Type</th>
+   581→   581→                        <th className="px-3 py-2 font-semibold">Month</th>
+   582→   582→                        <th className="px-3 py-2 font-semibold">Method</th>
+   583→   583→                        <th className="px-3 py-2 text-right font-semibold">Amount</th>
+   584→   584→                        <th className="px-3 py-2 font-semibold">Notes</th>
+   585→   585→                      </tr>
+   586→   586→                    </thead>
+   587→   587→                    <tbody>
+   588→   588→                      {payments.map((p) => (
+   589→   589→                        <tr key={p.id} className="border-b last:border-0">
+   590→   590→                          <td className="whitespace-nowrap px-3 py-2 text-xs"><DateCell value={p.date} /></td>
+   591→   591→                          <td className="px-3 py-2">
+   592→   592→                            <StatusBadge label={SALARY_PAYMENT_TYPE_LABELS[p.type] ?? p.type} className={SALARY_TYPE_BADGE_COLORS[p.type]} />
+   593→   593→                          </td>
+   594→   594→                          <td className="whitespace-nowrap px-3 py-2 tabular-nums text-muted-foreground">{p.month ?? "—"}</td>
+   595→   595→                          <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">{PAYMENT_METHOD_LABELS[p.method] ?? p.method}</td>
+   596→   596→                          <td className="px-3 py-2 text-right"><Money value={p.amount} colored className="font-semibold" /></td>
+   597→   597→                          <td className="max-w-[160px] truncate px-3 py-2 text-xs text-muted-foreground" title={p.notes ?? ""}>{p.notes ?? "—"}</td>
+   598→   598→                        </tr>
+   599→   599→                      ))}
+   600→   600→                    </tbody>
+   601→   601→                  </table>
+   602→   602→                </div>
+   603→   603→              )}
+   604→   604→            </TabsContent>
+   605→   605→          </Tabs>
+   606→   606→        </div>
+   607→   607→      </SheetContent>
+   608→   608→
+   609→   609→      {payOpen && <PaySalaryDialog employee={employee} onClose={() => setPayOpen(false)} />}
+   610→   610→
+   611→   611→      <ConfirmDialog
+   612→   612→        open={deactivateOpen}
+   613→   613→        onOpenChange={setDeactivateOpen}
+   614→   614→        title={`Deactivate ${employee.name}?`}
+   615→   615→        description="The employee stays in records for history but is hidden from attendance marking. Salary history is preserved."
+   616→   616→        confirmLabel="Deactivate"
+   617→   617→        destructive
+   618→   618→        loading={togglingStatus}
+   619→   619→        onConfirm={() => updateStatus(employee.id, "INACTIVE")}
+   620→   620→      />
+   621→   621→    </Sheet>
+   622→   622→  )
+   623→   623→}
+   624→   624→
+   625→   625→// ==================== PAY SALARY / ADVANCE DIALOG ====================
+   626→   626→function PaySalaryDialog({ employee, onClose }: { employee: Employee; onClose: () => void }) {
+   627→   627→  const qc = useQueryClient()
+   628→   628→  const [saving, setSaving] = useState(false)
+   629→   629→  const [form, setForm] = useState({
+   630→   630→    type: "SALARY",
+   631→   631→    amount: employee.salary || 0,
+   632→   632→    method: "CASH",
+   633→   633→    month: ymIST(0),
+   634→   634→    date: ymdIST(),
+   635→   635→    notes: "",
+   636→   636→  })
+   637→   637→
+   638→   638→  function changeType(type: string) {
+   639→   639→    setForm((f) => ({ ...f, type, amount: type === "SALARY" ? (employee.salary || 0) : f.amount }))
+   640→   640→  }
+   641→   641→
+   642→   642→  async function save() {
+   643→   643→    if (!form.amount || form.amount <= 0) {
+   644→   644→      return toast({ title: "Enter a valid amount", variant: "destructive" })
+   645→   645→    }
+   646→   646→    setSaving(true)
+   647→   647→    try {
+   648→   648→      await api.post("staff/payments", { employeeId: employee.id, ...form })
+   649→   649→      toast({
+   650→   650→        title: `${SALARY_PAYMENT_TYPE_LABELS[form.type] ?? form.type} recorded`,
+   651→   651→        description: `${employee.name} — ${fmtMoney(form.amount)} via ${PAYMENT_METHOD_LABELS[form.method] ?? form.method}${form.month ? ` (${form.month})` : ""}`,
+   652→   652→      })
+   653→   653→      qc.invalidateQueries({ queryKey: ["staff"] })
+   654→   654→      qc.invalidateQueries({ queryKey: ["expenses"] })
+   655→   655→      qc.invalidateQueries({ queryKey: ["payments"] })
+   656→   656→      qc.invalidateQueries({ queryKey: ["accounts"] })
+   657→   657→      onClose()
+   658→   658→    } catch (e: any) {
+   659→   659→      toast({ title: "Payment failed", description: e.message, variant: "destructive" })
+   660→   660→    } finally {
+   661→   661→      setSaving(false)
+   662→   662→    }
+   663→   663→  }
+   664→   664→
+   665→   665→  return (
+   666→   666→    <Dialog open onOpenChange={(v) => !v && onClose()}>
+   667→   667→      <DialogContent className="max-w-lg">
+   668→   668→        <DialogHeader>
+   669→   669→          <DialogTitle>Pay {employee.name}</DialogTitle>
+   670→   670→        </DialogHeader>
+   671→   671→        <div className="grid gap-3 sm:grid-cols-2">
+   672→   672→          <Field label="Payment type" required>
+   673→   673→            <SelectInput
+   674→   674→              value={form.type}
+   675→   675→              onChange={changeType}
+   676→   676→              options={SALARY_PAYMENT_TYPES.map((t) => ({ value: t, label: SALARY_PAYMENT_TYPE_LABELS[t] }))}
+   677→   677→            />
+   678→   678→          </Field>
+   679→   679→          <Field
+   680→   680→            label="Amount (₹)"
+   681→   681→            required
+   682→   682→            hint={form.type === "SALARY" && employee.salary > 0 ? `Monthly salary: ${fmtMoney(employee.salary)}` : undefined}
+   683→   683→          >
+   684→   684→            <NumberInput value={form.amount} onChange={(v) => setForm({ ...form, amount: v })} min={0} />
+   685→   685→          </Field>
+   686→   686→          <Field label="Method" required>
+   687→   687→            <SelectInput
+   688→   688→              value={form.method}
+   689→   689→              onChange={(v) => setForm({ ...form, method: v })}
+   690→   690→              options={PAYMENT_METHODS.map((m) => ({ value: m, label: PAYMENT_METHOD_LABELS[m] }))}
+   691→   691→            />
+   692→   692→          </Field>
+   693→   693→          <Field label="Month" hint="Salary period (YYYY-MM)">
+   694→   694→            <TextInput type="month" value={form.month} onChange={(v) => setForm({ ...form, month: v })} />
+   695→   695→          </Field>
+   696→   696→          <Field label="Date" required>
+   697→   697→            <TextInput type="date" value={form.date} onChange={(v) => setForm({ ...form, date: v })} />
+   698→   698→          </Field>
+   699→   699→          <div className="sm:col-span-2">
+   700→   700→            <Field label="Notes">
+   701→   701→              <TextArea value={form.notes} onChange={(v) => setForm({ ...form, notes: v })} rows={2} placeholder="Remarks…" />
+   702→   702→            </Field>
+   703→   703→          </div>
+   704→   704→        </div>
+   705→   705→        <p className="rounded-md bg-muted/60 p-2.5 text-xs text-muted-foreground">
+   706→   706→          Salary &amp; bonus payments also create an expense entry and a money-out payment record. Advances are recoverable and not expensed; deductions reduce take-home.
+   707→   707→        </p>
+   708→   708→        <DialogFooter>
+   709→   709→          <Button variant="outline" onClick={onClose}>Cancel</Button>
+   710→   710→          <Button onClick={save} disabled={saving}>
+   711→   711→            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Record Payment
+   712→   712→          </Button>
+   713→   713→        </DialogFooter>
+   714→   714→      </DialogContent>
+   715→   715→    </Dialog>
+   716→   716→  )
+   717→   717→}
+   718→   718→
+   719→   719→// ==================== ATTENDANCE TAB ====================
+   720→   720→function AttendanceTab({ employees, loading: staffLoading }: { employees: Employee[]; loading?: boolean }) {
+   721→   721→  const qc = useQueryClient()
+   722→   722→  const canEdit = canDo("staff", "edit")
+   723→   723→  const [view, setView] = useState<"day" | "month">("day")
+   724→   724→  const [date, setDate] = useState(ymdIST())
+   725→   725→  const [month, setMonth] = useState(ymIST(0))
+   726→   726→  const [entries, setEntries] = useState<Record<string, string>>({})
+   727→   727→  const [saving, setSaving] = useState(false)
+   728→   728→
+   729→   729→  const dayQuery = useQuery({
+   730→   730→    queryKey: ["staff", "attendance", "day", date],
+   731→   731→    queryFn: () => api.get(`staff/attendance${qs({ date })}`),
+   732→   732→    enabled: view === "day" && !!date,
+   733→   733→  })
+   734→   734→
+   735→   735→  // Prefill marks from saved records whenever the day data (re)loads
+   736→   736→  useEffect(() => {
+   737→   737→    const records: AttendanceRecord[] = dayQuery.data?.records ?? []
+   738→   738→    setEntries(Object.fromEntries(records.map((r) => [r.employeeId, r.status])))
+   739→   739→  }, [dayQuery.data])
+   740→   740→
+   741→   741→  const monthQuery = useQuery({
+   742→   742→    queryKey: ["staff", "attendance", "month", month],
+   743→   743→    queryFn: () => api.get(`staff/attendance${qs({ month })}`),
+   744→   744→    enabled: view === "month" && /^\d{4}-\d{2}$/.test(month),
+   745→   745→  })
+   746→   746→
+   747→   747→  // Summary chips
+   748→   748→  const counts: Record<string, number> = { PRESENT: 0, ABSENT: 0, HALF_DAY: 0, LEAVE: 0 }
+   749→   749→  for (const e of employees) {
+   750→   750→    const s = entries[e.id]
+   751→   751→    if (s && counts[s] !== undefined) counts[s] += 1
+   752→   752→  }
+   753→   753→  const marked = ATTENDANCE_STATUSES.reduce((s, k) => s + (counts[k] ?? 0), 0)
+   754→   754→  const notMarked = Math.max(0, employees.length - marked)
+   755→   755→
+   756→   756→  function markAllPresent() {
+   757→   757→    setEntries(Object.fromEntries(employees.map((e) => [e.id, "PRESENT"])))
+   758→   758→  }
+   759→   759→
+   760→   760→  async function saveAttendance() {
+   761→   761→    const payload = employees
+   762→   762→      .filter((e) => entries[e.id])
+   763→   763→      .map((e) => ({ employeeId: e.id, status: entries[e.id] }))
+   764→   764→    if (payload.length === 0) {
+   765→   765→      return toast({ title: "Nothing to save", description: "Mark at least one employee first.", variant: "destructive" })
+   766→   766→    }
+   767→   767→    setSaving(true)
+   768→   768→    try {
+   769→   769→      const res = await api.post("staff/attendance", { date, entries: payload })
+   770→   770→      const saved: number = res?.records?.length ?? payload.length
+   771→   771→      toast({
+   772→   772→        title: "Attendance saved",
+   773→   773→        description: `${saved} ${saved === 1 ? "employee" : "employees"} marked for ${fmtDateIST(date)}.`,
+   774→   774→      })
+   775→   775→      qc.invalidateQueries({ queryKey: ["staff"] })
+   776→   776→    } catch (e: any) {
+   777→   777→      toast({ title: "Failed to save attendance", description: e.message, variant: "destructive" })
+   778→   778→    } finally {
+   779→   779→      setSaving(false)
+   780→   780→    }
+   781→   781→  }
+   782→   782→
+   783→   783→  // Month matrix helpers
+   784→   784→  const [year, mon] = month.split("-").map(Number)
+   785→   785→  const daysInMonth = new Date(year, mon, 0).getDate()
+   786→   786→  const dayMap = useMemo(() => {
+   787→   787→    const m = new Map<string, string>()
+   788→   788→    for (const r of (monthQuery.data?.records ?? []) as AttendanceRecord[]) {
+   789→   789→      m.set(`${r.employeeId}|${parseInt(r.date.slice(8), 10)}`, r.status)
+   790→   790→    }
+   791→   791→    return m
+   792→   792→  }, [monthQuery.data])
+   793→   793→
+   794→   794→  function isSunday(day: number) {
+   795→   795→    return new Date(Date.UTC(year, mon - 1, day)).getUTCDay() === 0
+   796→   796→  }
+   797→   797→
+   798→   798→  return (
+   799→   799→    <div className="space-y-4">
+   800→   800→      {/* Toolbar */}
+   801→   801→      <div className="flex flex-wrap items-center gap-2">
+   802→   802→        {view === "day" ? (
+   803→   803→          <div className="relative">
+   804→   804→            <CalendarCheck className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+   805→   805→            <Input
+   806→   806→              type="date"
+   807→   807→              aria-label="Attendance date"
+   808→   808→              value={date}
+   809→   809→              onChange={(e) => setDate(e.target.value)}
+   810→   810→              className="h-9 w-[170px] pl-9"
+   811→   811→            />
+   812→   812→          </div>
+   813→   813→        ) : (
+   814→   814→          <div className="relative">
+   815→   815→            <CalendarDays className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+   816→   816→            <Input
+   817→   817→              type="month"
+   818→   818→              aria-label="Attendance month"
+   819→   819→              value={month}
+   820→   820→              onChange={(e) => setMonth(e.target.value)}
+   821→   821→              className="h-9 w-[170px] pl-9"
+   822→   822→            />
+   823→   823→          </div>
+   824→   824→        )}
+   825→   825→        {view === "day" && canEdit && (
+   826→   826→          <>
+   827→   827→            <Button variant="outline" size="sm" className="h-9" onClick={markAllPresent} disabled={employees.length === 0}>
+   828→   828→              <CheckCheck className="mr-1.5 h-4 w-4" /> All Present
+   829→   829→            </Button>
+   830→   830→            <Button size="sm" className="h-9" onClick={saveAttendance} disabled={saving || !date || employees.length === 0}>
+   831→   831→              {saving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <CalendarCheck className="mr-1.5 h-4 w-4" />}
+   832→   832→              Save Attendance
+   833→   833→            </Button>
+   834→   834→          </>
+   835→   835→        )}
+   836→   836→        <div className="ml-auto">
+   837→   837→          <Tabs value={view} onValueChange={(v) => setView(v === "month" ? "month" : "day")}>
+   838→   838→            <TabsList>
+   839→   839→              <TabsTrigger value="day" className="px-4">Day</TabsTrigger>
+   840→   840→              <TabsTrigger value="month" className="px-4">Month</TabsTrigger>
+   841→   841→            </TabsList>
+   842→   842→          </Tabs>
+   843→   843→        </div>
+   844→   844→      </div>
+   845→   845→
+   846→   846→      {/* Day view */}
+   847→   847→      {view === "day" && (
+   848→   848→        <>
+   849→   849→          <div className="flex flex-wrap items-center gap-2">
+   850→   850→            <StatusBadge label={`Present ${counts.PRESENT}`} className={ATTENDANCE_BADGE_COLORS.PRESENT} />
+   851→   851→            <StatusBadge label={`Absent ${counts.ABSENT}`} className={ATTENDANCE_BADGE_COLORS.ABSENT} />
+   852→   852→            <StatusBadge label={`Half Day ${counts.HALF_DAY}`} className={ATTENDANCE_BADGE_COLORS.HALF_DAY} />
+   853→   853→            <StatusBadge label={`Leave ${counts.LEAVE}`} className={ATTENDANCE_BADGE_COLORS.LEAVE} />
+   854→   854→            <StatusBadge label={`Not Marked ${notMarked}`} className="bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400" />
+   855→   855→            <span className="ml-auto text-xs text-muted-foreground">
+   856→   856→              {employees.length} active employees · {fmtDateIST(date)}
+   857→   857→            </span>
+   858→   858→          </div>
+   859→   859→
+   860→   860→          <div className="overflow-hidden rounded-lg border bg-card">
+   861→   861→            <div className="overflow-x-auto thin-scrollbar">
+   862→   862→              <table className="w-full text-sm">
+   863→   863→                <thead>
+   864→   864→                  <tr className="border-b bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
+   865→   865→                    <th className="px-3 py-2 font-semibold">Employee</th>
+   866→   866→                    <th className="hidden px-3 py-2 font-semibold md:table-cell">Designation</th>
+   867→   867→                    <th className="hidden px-3 py-2 font-semibold lg:table-cell">Phone</th>
+   868→   868→                    <th className="w-[180px] px-3 py-2 font-semibold">Attendance</th>
+   869→   869→                  </tr>
+   870→   870→                </thead>
+   871→   871→                <tbody>
+   872→   872→                  {dayQuery.isLoading || staffLoading ? (
+   873→   873→                    Array.from({ length: 4 }).map((_, i) => (
+   874→   874→                      <tr key={i} className="border-b last:border-0">
+   875→   875→                        <td colSpan={4} className="px-3 py-3"><div className="h-5 w-full animate-pulse rounded bg-muted" /></td>
+   876→   876→                      </tr>
+   877→   877→                    ))
+   878→   878→                  ) : employees.length === 0 ? (
+   879→   879→                    <tr>
+   880→   880→                      <td colSpan={4} className="border-0 p-0">
+   881→   881→                        <EmptyState title="No active employees" description="Add employees to start marking daily attendance." />
+   882→   882→                      </td>
+   883→   883→                    </tr>
+   884→   884→                  ) : (
+   885→   885→                    employees.map((e) => (
+   886→   886→                      <tr key={e.id} className="border-b last:border-0 hover:bg-accent/40">
+   887→   887→                        <td className="px-3 py-2">
+   888→   888→                          <div className="flex items-center gap-2">
+   889→   889→                            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+   890→   890→                              {e.name?.[0]?.toUpperCase()}
+   891→   891→                            </div>
+   892→   892→                            <div className="min-w-0">
+   893→   893→                              <p className="truncate font-medium">{e.name}</p>
+   894→   894→                              <p className="text-xs text-muted-foreground">{e.code}</p>
+   895→   895→                            </div>
+   896→   896→                          </div>
+   897→   897→                        </td>
+   898→   898→                        <td className="hidden px-3 py-2 text-muted-foreground md:table-cell">{e.designation ?? "—"}</td>
+   899→   899→                        <td className="hidden px-3 py-2 tabular-nums text-muted-foreground lg:table-cell">{e.phone ?? "—"}</td>
+   900→   900→                        <td className="px-3 py-2">
+   901→   901→                          <div className="w-[170px]">
+   902→   902→                            <SelectInput
+   903→   903→                              value={entries[e.id] ?? "__none"}
+   904→   904→                              onChange={(v) => setEntries({ ...entries, [e.id]: v === "__none" ? "" : v })}
+   905→   905→                              disabled={!canEdit}
+   906→   906→                              options={[
+   907→   907→                                { value: "__none", label: "Not Marked" },
+   908→   908→                                ...ATTENDANCE_STATUSES.map((s) => ({ value: s, label: ATTENDANCE_STATUS_LABELS[s] })),
+   909→   909→                              ]}
+   910→   910→                            />
+   911→   911→                          </div>
+   912→   912→                        </td>
+   913→   913→                      </tr>
+   914→   914→                    ))
+   915→   915→                  )}
+   916→   916→                </tbody>
+   917→   917→              </table>
+   918→   918→            </div>
+   919→   919→          </div>
+   920→   920→        </>
+   921→   921→      )}
+   922→   922→
+   923→   923→      {/* Month view */}
+   924→   924→      {view === "month" && (
+   925→   925→        <>
+   926→   926→          {monthQuery.isLoading ? (
+   927→   927→            <div className="flex items-center justify-center py-16">
+   928→   928→              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+   929→   929→            </div>
+   930→   930→          ) : employees.length === 0 ? (
+   931→   931→            <EmptyState title="No active employees" description="Add employees to see the monthly attendance matrix." />
+   932→   932→          ) : (
+   933→   933→            <div className="overflow-hidden rounded-lg border bg-card">
+   934→   934→              <div className="overflow-x-auto thin-scrollbar">
+   935→   935→                <table className="w-full text-sm">
+   936→   936→                  <thead>
+   937→   937→                    <tr className="border-b bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
+   938→   938→                      <th className="sticky left-0 z-10 bg-muted px-3 py-2 text-left font-semibold">Employee</th>
+   939→   939→                      {Array.from({ length: daysInMonth }, (_, i) => i + 1).map((d) => (
+   940→   940→                        <th
+   941→   941→                          key={d}
+   942→   942→                          className={cn(
+   943→   943→                            "w-7 px-0 py-2 text-center font-semibold tabular-nums",
+   944→   944→                            isSunday(d) && "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+   945→   945→                          )}
+   946→   946→                        >
+   947→   947→                          {d}
+   948→   948→                        </th>
+   949→   949→                      ))}
+   950→   950→                      <th className="px-3 py-2 text-center font-semibold" title="Days present this month">P</th>
+   951→   951→                    </tr>
+   952→   952→                  </thead>
+   953→   953→                  <tbody>
+   954→   954→                    {employees.map((e) => {
+   955→   955→                      let presentDays = 0
+   956→   956→                      for (let d = 1; d <= daysInMonth; d++) {
+   957→   957→                        if (dayMap.get(`${e.id}|${d}`) === "PRESENT") presentDays += 1
+   958→   958→                      }
+   959→   959→                      return (
+   960→   960→                        <tr key={e.id} className="border-b last:border-0">
+   961→   961→                          <td className="sticky left-0 z-10 whitespace-nowrap bg-card px-3 py-1.5">
+   962→   962→                            <span className="text-sm font-medium">{e.name}</span>
+   963→   963→                            <span className="ml-1.5 text-xs text-muted-foreground">{e.code}</span>
+   964→   964→                          </td>
+   965→   965→                          {Array.from({ length: daysInMonth }, (_, i) => i + 1).map((d) => {
+   966→   966→                            const status = dayMap.get(`${e.id}|${d}`)
+   967→   967→                            return (
+   968→   968→                              <td key={d} className={cn("py-1.5 text-center", isSunday(d) && "bg-amber-500/5")}>
+   969→   969→                                {status ? (
+   970→   970→                                  <span
+   971→   971→                                    title={`${e.name} — ${fmtDateIST(`${month}-${String(d).padStart(2, "0")}`)}: ${ATTENDANCE_STATUS_LABELS[status] ?? status}`}
+   972→   972→                                    className={cn("inline-block h-2.5 w-2.5 rounded-full", ATTENDANCE_DOT_COLORS[status] ?? "bg-zinc-400")}
+   973→   973→                                  />
+   974→   974→                                ) : (
+   975→   975→                                  <span className="text-[10px] leading-none text-muted-foreground/40">·</span>
+   976→   976→                                )}
+   977→   977→                              </td>
+   978→   978→                            )
+   979→   979→                          })}
+   980→   980→                          <td className="px-3 py-1.5 text-center text-xs font-semibold tabular-nums">{presentDays}</td>
+   981→   981→                        </tr>
+   982→   982→                      )
+   983→   983→                    })}
+   984→   984→                  </tbody>
+   985→   985→                </table>
+   986→   986→              </div>
+   987→   987→            </div>
+   988→   988→          )}
+   989→   989→          <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+   990→   990→            {ATTENDANCE_STATUSES.map((s) => (
+   991→   991→              <span key={s} className="inline-flex items-center gap-1.5">
+   992→   992→                <span className={cn("h-2.5 w-2.5 rounded-full", ATTENDANCE_DOT_COLORS[s])} />
+   993→   993→                {ATTENDANCE_STATUS_LABELS[s]}
+   994→   994→              </span>
+   995→   995→            ))}
+   996→   996→            <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full border border-dashed border-muted-foreground/60" />Not marked</span>
+   997→   997→            <span>Sundays shaded · P = days present</span>
+   998→   998→          </div>
+   999→   999→        </>
+  1000→  1000→      )}
+  1001→  1001→    </div>
+  1002→  1002→  )
+  1003→  1003→}
+  1004→  1004→
+  1005→  1005→// ==================== TASKS TAB ====================
+  1006→  1006→function TasksTab({ employees, focusId, autoNew }: { employees: Employee[]; focusId?: string | null; autoNew?: boolean }) {
+  1007→  1007→  const qc = useQueryClient()
+  1008→  1008→  const canCreate = canDo("tasks", "create")
+  1009→  1009→  const canEdit = canDo("tasks", "edit")
+  1010→  1010→  const canDelete = canDo("tasks", "delete")
+  1011→  1011→  const [creating, setCreating] = useState(!!autoNew)
+  1012→  1012→  const [editing, setEditing] = useState<Task | null>(null)
+  1013→  1013→  const [deleting, setDeleting] = useState<Task | null>(null)
+  1014→  1014→  const [statusFilter, setStatusFilter] = useState("ALL")
+  1015→  1015→  const [busyId, setBusyId] = useState<string | null>(null)
+  1016→  1016→
+  1017→  1017→  const { data, isLoading } = useQuery({
+  1018→  1018→    queryKey: ["tasks"],
+  1019→  1019→    queryFn: () => api.get("tasks"),
+  1020→  1020→  })
+  1021→  1021→  const tasks: Task[] = data?.tasks ?? []
+  1022→  1022→  const summary = data?.summary
+  1023→  1023→
+  1024→  1024→  // Deep-link focus: scroll the task into view once loaded
+  1025→  1025→  useEffect(() => {
+  1026→  1026→    if (!focusId || tasks.length === 0) return
+  1027→  1027→    const el = document.getElementById(`task-${focusId}`)
+  1028→  1028→    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" })
+  1029→  1029→  }, [focusId, tasks])
+  1030→  1030→
+  1031→  1031→  const completedCount = tasks.filter((t) => t.status === "COMPLETED").length
+  1032→  1032→  const filtered = statusFilter === "ALL" ? tasks : tasks.filter((t) => t.status === statusFilter)
+  1033→  1033→
+  1034→  1034→  async function changeStatus(task: Task, status: string) {
+  1035→  1035→    setBusyId(task.id)
+  1036→  1036→    try {
+  1037→  1037→      await api.put(`tasks/${task.id}`, { status })
+  1038→  1038→      toast({
+  1039→  1039→        title: status === "COMPLETED" ? "Task completed" : status === "IN_PROGRESS" ? "Task started" : `Task ${TASK_STATUS_LABELS[status]?.toLowerCase() ?? "updated"}`,
+  1040→  1040→        description: task.title,
+  1041→  1041→      })
+  1042→  1042→      qc.invalidateQueries({ queryKey: ["tasks"] })
+  1043→  1043→    } catch (e: any) {
+  1044→  1044→      toast({ title: "Could not update task", description: e.message, variant: "destructive" })
+  1045→  1045→    } finally {
+  1046→  1046→      setBusyId(null)
+  1047→  1047→    }
+  1048→  1048→  }
+  1049→  1049→
+  1050→  1050→  async function deleteTask() {
+  1051→  1051→    if (!deleting) return
+  1052→  1052→    setBusyId(deleting.id)
+  1053→  1053→    try {
+  1054→  1054→      await api.del(`tasks/${deleting.id}`)
+  1055→  1055→      toast({ title: "Task deleted", description: deleting.title })
+  1056→  1056→      qc.invalidateQueries({ queryKey: ["tasks"] })
+  1057→  1057→      setDeleting(null)
+  1058→  1058→    } catch (e: any) {
+  1059→  1059→      toast({ title: "Could not delete task", description: e.message, variant: "destructive" })
+  1060→  1060→    } finally {
+  1061→  1061→      setBusyId(null)
+  1062→  1062→    }
+  1063→  1063→  }
+  1064→  1064→
+  1065→  1065→  const chips = [
+  1066→  1066→    { value: "ALL", label: "All", count: tasks.length },
+  1067→  1067→    ...TASK_STATUSES.map((s) => ({ value: s, label: TASK_STATUS_LABELS[s], count: tasks.filter((t) => t.status === s).length })),
+  1068→  1068→  ]
+  1069→  1069→
+  1070→  1070→  return (
+  1071→  1071→    <div className="space-y-4">
+  1072→  1072→      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+  1073→  1073→        <StatCard label="Pending" value={summary?.pending ?? (isLoading ? "…" : 0)} icon={<ListTodo className="h-4 w-4" />} />
+  1074→  1074→        <StatCard label="In Progress" value={summary?.inProgress ?? (isLoading ? "…" : 0)} tone="warning" icon={<Play className="h-4 w-4" />} />
+  1075→  1075→        <StatCard
+  1076→  1076→          label="Overdue"
+  1077→  1077→          value={summary?.overdue ?? (isLoading ? "…" : 0)}
+  1078→  1078→          tone={(summary?.overdue ?? 0) > 0 ? "negative" : "default"}
+  1079→  1079→          icon={<AlertTriangle className="h-4 w-4" />}
+  1080→  1080→        />
+  1081→  1081→        <StatCard label="Completed" value={isLoading ? "…" : completedCount} tone="positive" icon={<CheckCircle2 className="h-4 w-4" />} />
+  1082→  1082→      </div>
+  1083→  1083→
+  1084→  1084→      <div className="flex flex-wrap items-center gap-1.5">
+  1085→  1085→        {chips.map((c) => (
+  1086→  1086→          <button
+  1087→  1087→            key={c.value}
+  1088→  1088→            onClick={() => setStatusFilter(c.value)}
+  1089→  1089→            className={cn(
+  1090→  1090→              "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+  1091→  1091→              statusFilter === c.value
+  1092→  1092→                ? "border-primary bg-primary text-primary-foreground"
+  1093→  1093→                : "bg-card text-muted-foreground hover:bg-accent hover:text-foreground",
+  1094→  1094→            )}
+  1095→  1095→          >
+  1096→  1096→            {c.label}
+  1097→  1097→            <span className="tabular-nums opacity-70">{c.count}</span>
+  1098→  1098→          </button>
+  1099→  1099→        ))}
+  1100→  1100→        {canCreate && (
+  1101→  1101→          <Button size="sm" className="ml-auto h-8" onClick={() => setCreating(true)}>
+  1102→  1102→            <ListTodo className="mr-1.5 h-4 w-4" /> New Task
+  1103→  1103→          </Button>
+  1104→  1104→        )}
+  1105→  1105→      </div>
+  1106→  1106→
+  1107→  1107→      {isLoading ? (
+  1108→  1108→        <div className="space-y-2">
+  1109→  1109→          {Array.from({ length: 4 }).map((_, i) => (
+  1110→  1110→            <div key={i} className="h-16 animate-pulse rounded-lg border bg-card" />
+  1111→  1111→          ))}
+  1112→  1112→        </div>
+  1113→  1113→      ) : filtered.length === 0 ? (
+  1114→  1114→        <EmptyState
+  1115→  1115→          title={statusFilter === "ALL" ? "No tasks yet" : `No ${TASK_STATUS_LABELS[statusFilter]?.toLowerCase() ?? statusFilter.toLowerCase()} tasks`}
+  1116→  1116→          description="Create tasks to assign work to your staff with priorities and due dates."
+  1117→  1117→          action={canCreate && statusFilter === "ALL" ? (
+  1118→  1118→            <Button size="sm" onClick={() => setCreating(true)}>
+  1119→  1119→              <ListTodo className="mr-1.5 h-4 w-4" /> New Task
+  1120→  1120→            </Button>
+  1121→  1121→          ) : undefined}
+  1122→  1122→        />
+  1123→  1123→      ) : (
+  1124→  1124→        <div className="space-y-2">
+  1125→  1125→          {filtered.map((t) => {
+  1126→  1126→            const overdue = isTaskOverdue(t)
+  1127→  1127→            const busy = busyId === t.id
+  1128→  1128→            return (
+  1129→  1129→              <div
+  1130→  1130→                key={t.id}
+  1131→  1131→                id={`task-${t.id}`}
+  1132→  1132→                className={cn(
+  1133→  1133→                  "rounded-lg border bg-card p-3 shadow-sm transition-shadow hover:shadow-md",
+  1134→  1134→                  focusId === t.id && "ring-2 ring-primary",
+  1135→  1135→                  t.status === "COMPLETED" && "opacity-75",
+  1136→  1136→                )}
+  1137→  1137→              >
+  1138→  1138→                <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+  1139→  1139→                  <StatusBadge label={TASK_PRIORITY_LABELS[t.priority] ?? t.priority} className={TASK_PRIORITY_COLORS[t.priority]} />
+  1140→  1140→                  <div className="min-w-0 flex-1">
+  1141→  1141→                    <p className={cn("truncate text-sm font-medium", t.status === "COMPLETED" && "text-muted-foreground line-through")}>
+  1142→  1142→                      {t.title}
+  1143→  1143→                    </p>
+  1144→  1144→                    <p className="truncate text-xs text-muted-foreground">
+  1145→  1145→                      {t.assignedTo ? `Assigned to ${t.assignedTo}` : "Unassigned"}
+  1146→  1146→                      {t.createdByName ? ` · by ${t.createdByName}` : ""}
+  1147→  1147→                    </p>
+  1148→  1148→                  </div>
+  1149→  1149→                  <div className="text-right">
+  1150→  1150→                    <p className={cn("whitespace-nowrap text-xs font-medium", overdue ? "text-red-600 dark:text-red-400" : "text-muted-foreground")}>
+  1151→  1151→                      {t.dueDate ? (
+  1152→  1152→                        <>
+  1153→  1153→                          <CalendarClock className="mr-1 inline h-3.5 w-3.5" />
+  1154→  1154→                          <DateCell value={t.dueDate} />
+  1155→  1155→                        </>
+  1156→  1156→                      ) : (
+  1157→  1157→                        "No due date"
+  1158→  1158→                      )}
+  1159→  1159→                    </p>
+  1160→  1160→                    {overdue && <p className="text-[10px] font-semibold uppercase tracking-wide text-red-600 dark:text-red-400">Overdue</p>}
+  1161→  1161→                  </div>
+  1162→  1162→                  <StatusBadge label={TASK_STATUS_LABELS[t.status] ?? t.status} className={TASK_STATUS_BADGE_COLORS[t.status]} />
+  1163→  1163→                  {canEdit && (
+  1164→  1164→                    <div className="flex items-center gap-1">
+  1165→  1165→                      {t.status === "PENDING" && (
+  1166→  1166→                        <Button variant="outline" size="sm" className="h-8" disabled={busy} onClick={() => changeStatus(t, "IN_PROGRESS")}>
+  1167→  1167→                          <Play className="mr-1 h-3.5 w-3.5" /> Start
+  1168→  1168→                        </Button>
+  1169→  1169→                      )}
+  1170→  1170→                      {(t.status === "PENDING" || t.status === "IN_PROGRESS") && (
+  1171→  1171→                        <Button variant="outline" size="sm" className="h-8" disabled={busy} onClick={() => changeStatus(t, "COMPLETED")}>
+  1172→  1172→                          <CheckCircle2 className="mr-1 h-3.5 w-3.5" /> Complete
+  1173→  1173→                        </Button>
+  1174→  1174→                      )}
+  1175→  1175→                      {(t.status === "COMPLETED" || t.status === "CANCELLED") && (
+  1176→  1176→                        <Button variant="ghost" size="sm" className="h-8" disabled={busy} onClick={() => changeStatus(t, "PENDING")}>
+  1177→  1177→                          <RotateCcw className="mr-1 h-3.5 w-3.5" /> Reopen
+  1178→  1178→                        </Button>
+  1179→  1179→                      )}
+  1180→  1180→                      <Button variant="ghost" size="icon" className="h-8 w-8" disabled={busy} onClick={() => setEditing(t)} aria-label={`Edit ${t.title}`}>
+  1181→  1181→                        <Pencil className="h-3.5 w-3.5" />
+  1182→  1182→                      </Button>
+  1183→  1183→                      {canDelete && (
+  1184→  1184→                        <Button
+  1185→  1185→                          variant="ghost"
+  1186→  1186→                          size="icon"
+  1187→  1187→                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+  1188→  1188→                          disabled={busy}
+  1189→  1189→                          onClick={() => setDeleting(t)}
+  1190→  1190→                          aria-label={`Delete ${t.title}`}
+  1191→  1191→                        >
+  1192→  1192→                          <Trash2 className="h-3.5 w-3.5" />
+  1193→  1193→                        </Button>
+  1194→  1194→                      )}
+  1195→  1195→                    </div>
+  1196→  1196→                  )}
+  1197→  1197→                </div>
+  1198→  1198→                {t.description && <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">{t.description}</p>}
+  1199→  1199→              </div>
+  1200→  1200→            )
+  1201→  1201→          })}
+  1202→  1202→        </div>
+  1203→  1203→      )}
+  1204→  1204→
+  1205→  1205→      {creating && <TaskForm employees={employees} onClose={() => setCreating(false)} />}
+  1206→  1206→      {editing && <TaskForm employees={employees} task={editing} onClose={() => setEditing(null)} />}
+  1207→  1207→      {deleting && (
+  1208→  1208→        <ConfirmDialog
+  1209→  1209→          open
+  1210→  1210→          onOpenChange={() => setDeleting(null)}
+  1211→  1211→          title="Delete task?"
+  1212→  1212→          description={`"${deleting.title}" will be permanently removed.`}
+  1213→  1213→          confirmLabel="Delete"
+  1214→  1214→          destructive
+  1215→  1215→          loading={busyId === deleting.id}
+  1216→  1216→          onConfirm={deleteTask}
+  1217→  1217→        />
+  1218→  1218→      )}
+  1219→  1219→    </div>
+  1220→  1220→  )
+  1221→  1221→}
+  1222→  1222→
+  1223→  1223→// ==================== TASK FORM (create / edit) ====================
+  1224→  1224→function TaskForm({ task, employees, onClose }: { task?: Task; employees: Employee[]; onClose: () => void }) {
+  1225→  1225→  const qc = useQueryClient()
+  1226→  1226→  const [saving, setSaving] = useState(false)
+  1227→  1227→  const [form, setForm] = useState({
+  1228→  1228→    title: task?.title ?? "",
+  1229→  1229→    description: task?.description ?? "",
+  1230→  1230→    assignedTo: task?.assignedTo ?? "",
+  1231→  1231→    priority: task?.priority ?? "MEDIUM",
+  1232→  1232→    dueDate: task?.dueDate ? fmtDateIST(task.dueDate, "yyyy-MM-dd") : "",
+  1233→  1233→  })
+  1234→  1234→
+  1235→  1235→  async function save() {
+  1236→  1236→    if (!form.title.trim()) return toast({ title: "Title is required", variant: "destructive" })
+  1237→  1237→    setSaving(true)
+  1238→  1238→    try {
+  1239→  1239→      const payload = {
+  1240→  1240→        title: form.title.trim(),
+  1241→  1241→        description: form.description.trim(),
+  1242→  1242→        assignedTo: form.assignedTo.trim(),
+  1243→  1243→        priority: form.priority,
+  1244→  1244→        dueDate: form.dueDate,
+  1245→  1245→      }
+  1246→  1246→      if (task) await api.put(`tasks/${task.id}`, payload)
+  1247→  1247→      else await api.post("tasks", payload)
+  1248→  1248→      toast({ title: task ? "Task updated" : "Task created", description: form.title.trim() })
+  1249→  1249→      qc.invalidateQueries({ queryKey: ["tasks"] })
+  1250→  1250→      onClose()
+  1251→  1251→    } catch (e: any) {
+  1252→  1252→      toast({ title: "Failed to save task", description: e.message, variant: "destructive" })
+  1253→  1253→    } finally {
+  1254→  1254→      setSaving(false)
+  1255→  1255→    }
+  1256→  1256→  }
+  1257→  1257→
+  1258→  1258→  return (
+  1259→  1259→    <Dialog open onOpenChange={(v) => !v && onClose()}>
+  1260→  1260→      <DialogContent className="max-w-lg">
+  1261→  1261→        <DialogHeader>
+  1262→  1262→          <DialogTitle>{task ? "Edit Task" : "New Task"}</DialogTitle>
+  1263→  1263→        </DialogHeader>
+  1264→  1264→        <div className="grid gap-3 sm:grid-cols-2">
+  1265→  1265→          <div className="sm:col-span-2">
+  1266→  1266→            <Field label="Title" required>
+  1267→  1267→              <TextInput value={form.title} onChange={(v) => setForm({ ...form, title: v })} placeholder="What needs to be done?" autoFocus />
+  1268→  1268→            </Field>
+  1269→  1269→          </div>
+  1270→  1270→          <Field label="Assign to" hint="Staff name or free text">
+  1271→  1271→            <Input
+  1272→  1272→              list="task-assign-suggestions"
+  1273→  1273→              value={form.assignedTo}
+  1274→  1274→              onChange={(e) => setForm({ ...form, assignedTo: e.target.value })}
+  1275→  1275→              placeholder="e.g. Asha Verma"
+  1276→  1276→              className="h-9"
+  1277→  1277→            />
+  1278→  1278→            <datalist id="task-assign-suggestions">
+  1279→  1279→              {employees.map((e) => (
+  1280→  1280→                <option key={e.id} value={e.name} />
+  1281→  1281→              ))}
+  1282→  1282→            </datalist>
+  1283→  1283→          </Field>
+  1284→  1284→          <Field label="Priority">
+  1285→  1285→            <SelectInput
+  1286→  1286→              value={form.priority}
+  1287→  1287→              onChange={(v) => setForm({ ...form, priority: v })}
+  1288→  1288→              options={TASK_PRIORITIES.map((p) => ({ value: p, label: TASK_PRIORITY_LABELS[p] }))}
+  1289→  1289→            />
+  1290→  1290→          </Field>
+  1291→  1291→          <Field label="Due date">
+  1292→  1292→            <TextInput type="date" value={form.dueDate} onChange={(v) => setForm({ ...form, dueDate: v })} />
+  1293→  1293→          </Field>
+  1294→  1294→          <div className="sm:col-span-2">
+  1295→  1295→            <Field label="Description / notes">
+  1296→  1296→              <TextArea value={form.description} onChange={(v) => setForm({ ...form, description: v })} rows={3} placeholder="Details, instructions, remarks…" />
+  1297→  1297→            </Field>
+  1298→  1298→          </div>
+  1299→  1299→        </div>
+  1300→  1300→        <DialogFooter>
+  1301→  1301→          <Button variant="outline" onClick={onClose}>Cancel</Button>
+  1302→  1302→          <Button onClick={save} disabled={saving}>
+  1303→  1303→            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} {task ? "Save" : "Create Task"}
+  1304→  1304→          </Button>
+  1305→  1305→        </DialogFooter>
+  1306→  1306→      </DialogContent>
+  1307→  1307→    </Dialog>
+  1308→  1308→  )
+  1309→  1309→}
+  1310→  1310→
