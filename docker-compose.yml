@@ -1,0 +1,38 @@
+services:
+  app:
+    build:
+      context: .
+    image: cbm-app
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      # Path INSIDE the container; /app/db is a persistent volume, so data survives.
+      DATABASE_URL: file:/app/db/custom.db
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+    volumes:
+      - cbm-db:/app/db        # SQLite database (persistent)
+      - cbm-appdata:/app/app-data  # session secret key (persistent)
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"     # HTTP -> redirects to HTTPS
+      - "443:443"   # HTTPS + automatic Let's Encrypt certificate
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN to your actual domain, e.g. DOMAIN=app.example.com}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+
+volumes:
+  cbm-db:
+  cbm-appdata:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,6 @@
+# Caddy reverse proxy used inside docker-compose.
+# DOMAIN comes from the environment variable set in docker-compose.yml.
+# Caddy automatically provisions a free Let's Encrypt TLS certificate.
+{$DOMAIN} {
+    reverse_proxy app:3000
+}
