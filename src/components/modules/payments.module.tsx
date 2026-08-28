@@ -68,6 +68,7 @@ interface QrPaymentRow {
   customer?: { id: string; name: string } | null
   payment?: PaymentRow | null
   qrDataUrl?: string
+  qrImageUrl?: string | null
   upiUrl?: string
 }
 
@@ -1010,7 +1011,11 @@ function ActiveQRPanel({ qrInitial, onReset }: { qrInitial: QrPaymentRow; onRese
     <div>
       <div className="flex flex-col items-center gap-2 text-center">
         <div className="rounded-xl border bg-white p-3 shadow-sm">
-          <img src={qrInitial.qrDataUrl} alt={`UPI QR code to pay ${fmtMoney(qr.amount)}`} className="h-56 w-56" />
+          <img
+            src={qr.provider === "RAZORPAY" ? (qr.qrImageUrl || qrInitial.qrDataUrl) : qrInitial.qrDataUrl}
+            alt={`UPI QR code to pay ${fmtMoney(qr.amount)}`}
+            className="h-56 w-56"
+          />
         </div>
         <div className="flex items-center gap-2">
           <span className="font-mono text-sm font-semibold">{qr.code}</span>

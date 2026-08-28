@@ -3,12 +3,47 @@ import { db } from "@/lib/db"
 import { AppError, audit, optStr, optNum, parseDate, requireStr, notify } from "@/lib/server/helpers"
 import { applyCustomerPayment, SessionInfo, postCustomerLedger } from "@/lib/server/services/core"
 import QRCode from "qrcode"
+import { getRazorpayConfig, createRazorpayQr, listQrPayments } from "@/lib/server/razorpay"
 
 function buildUpiUrl(upiId: string, payee: string, amount: number, note: string) {
   const params = new URLSearchParams({
     pa: upiId, pn: payee, am: amount.toFixed(2), cu: "INR", tn: note,
   })
   return `upi://pay?${params.toString()}`
+}
+
+/**
+ * Marks a QR payment as VERIFIED and records the payment in the books.
+ * Shared by staff confirmation (manual) and the Razorpay webhook (automatic).
+ */
+export async function verifyQrPayment(
+  qrId: string,
+  opts: { transactionId?: string; verifiedBy: string }
+) {
+  return db.$transaction(async (tx) => {
+    const qr = await tx.qRPayment.findUnique({ where: { id: qrId } })
+    if (!qr) throw new AppError("QR payment not found", 404)
+    if (qr.status === "VERIFIED") return { alreadyVerified: true as const, qr }
+    if (qr.status === "CANCELLED") throw new AppError("QR payment was cancelled")
+
+    const payment = await applyCustomerPayment(tx, {
+      customerId: qr.customerId,
+      saleId: qr.saleId,
+      amount: qr.amount,
+      method: "UPI",
+      provider: qr.provider,
+      transactionId: opts.transactionId ?? null,
+      notes: `UPI QR payment ${qr.code}${qr.note ? ` (${qr.note})` : ""}`,
+      qrPaymentId: qr.id,
+      user: { id: "system", username: "system", fullName: opts.verifiedBy, role: "OWNER" },
+    })
+    await tx.qRPayment.update({
+      where: { id: qr.id },
+      data: { status: "VERIFIED", transactionId: opts.transactionId ?? null, verifiedAt: new Date(), verifiedBy: opts.verifiedBy, paymentId: payment.id },
+    })
+    await notify(tx, "Payment Received", `₹${qr.amount.toFixed(2)} UPI payment verified${qr.saleId ? " — invoice updated" : ""}.`, "PAYMENT", "INFO")
+    return { alreadyVerified: false as const, payment, qr: await tx.qRPayment.findUnique({ where: { id: qr.id } }) }
+  }, { timeout: 60000, maxWait: 20000 })
 }
 
 export async function handle(ctx: Ctx) {
@@ -175,6 +210,7 @@ export async function handle(ctx: Ctx) {
       }
       const note = optStr(b.note, 50) ?? (sale ? `${business.invoicePrefix} payment ${sale.invoiceNumber}` : `Payment ${code}`)
       const upiId = business.upiId as string
+      const rzp = await getRazorpayConfig()
       const created = await tx.qRPayment.create({
         data: {
           code, amount,
@@ -183,9 +219,23 @@ export async function handle(ctx: Ctx) {
           saleId: sale?.id ?? null,
           customerId: optStr(b.customerId) ?? sale?.customerId ?? null,
           status: "PENDING",
+          provider: rzp ? "RAZORPAY" : "UPI_QR",
           expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         },
       })
+      if (rzp) {
+        // Automatic verification path: Razorpay QR. Payment.captured webhook
+        // (or reconciliation on poll) marks it VERIFIED — no staff action needed.
+        try {
+          const rqr = await createRazorpayQr(rzp, { code, amount, note })
+          await tx.qRPayment.update({ where: { id: created.id }, data: { razorpayQrId: rqr.qrId } })
+          return { ...created, razorpayQrId: rqr.qrId, provider: "RAZORPAY", upiUrl: rqr.upiUrl, qrImageUrl: rqr.imageUrl, qrDataUrl: null }
+        } catch (e) {
+          // Fall back to plain UPI QR if Razorpay API fails — never block a sale.
+          console.error("Razorpay QR creation failed, falling back to UPI intent:", (e as Error).message)
+          await tx.qRPayment.update({ where: { id: created.id }, data: { provider: "UPI_QR" } })
+        }
+      }
       const upiUrl = buildUpiUrl(upiId, business.upiPayeeName ?? business.name, amount, note)
       const qrDataUrl = await QRCode.toDataURL(upiUrl, { width: 512, margin: 1 })
       return { ...created, upiUrl, qrDataUrl }
@@ -198,6 +248,21 @@ export async function handle(ctx: Ctx) {
   if (ctx.method === "GET" && action === "qr" && id) {
     const qr = await db.qRPayment.findUnique({ where: { id }, include: { sale: true, customer: true } })
     if (!qr) throw new AppError("QR payment not found", 404)
+    // Razorpay reconciliation: if the webhook was missed, check the provider
+    // directly while the UI polls, and auto-verify on a captured payment.
+    if (qr.provider === "RAZORPAY" && qr.status === "PENDING" && qr.razorpayQrId) {
+      const rzp = await getRazorpayConfig()
+      if (rzp) {
+        const pays = await listQrPayments(rzp, qr.razorpayQrId)
+        const captured = pays.find((p) => p.status === "captured" || p.status === "authorized")
+        if (captured) {
+          await verifyQrPayment(qr.id, { transactionId: captured.id, verifiedBy: "Razorpay (auto)" })
+          const fresh = await db.qRPayment.findUnique({ where: { id: qr.id }, include: { sale: true, customer: true } })
+          const payment = fresh?.paymentId ? await db.payment.findUnique({ where: { id: fresh.paymentId } }) : null
+          return json({ qr: { ...fresh, payment } })
+        }
+      }
+    }
     const payment = qr.paymentId ? await db.payment.findUnique({ where: { id: qr.paymentId } }) : null
     return json({ qr: { ...qr, payment } })
   }

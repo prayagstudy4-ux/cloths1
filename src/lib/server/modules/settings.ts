@@ -6,6 +6,7 @@ const SETTING_KEYS = [
   "auto_backup", "backup_retention_days", "session_timeout_hours", "require_login",
   "notify_low_stock", "notify_payment", "notify_due", "default_invoice_print",
   "allow_negative_stock", "razorpay_key_id", "razorpay_key_secret", "razorpay_enabled",
+  "razorpay_webhook_secret",
 ]
 
 export async function handle(ctx: Ctx) {
@@ -23,6 +24,7 @@ export async function handle(ctx: Ctx) {
     // Never expose full secret — mask it
     const masked = { ...out }
     if (masked.razorpay_key_secret) masked.razorpay_key_secret = masked.razorpay_key_secret.slice(0, 4) + "••••••••"
+    if (masked.razorpay_webhook_secret) masked.razorpay_webhook_secret = masked.razorpay_webhook_secret.slice(0, 4) + "••••••••"
     return json({ settings: masked })
   }
 
@@ -35,6 +37,7 @@ export async function handle(ctx: Ctx) {
       let value = String(b[k])
       // Don't overwrite the secret with the mask
       if (k === "razorpay_key_secret" && value.includes("••")) continue
+      if (k === "razorpay_webhook_secret" && value.includes("••")) continue
       await setSetting(k, value)
       changed.push(k)
     }

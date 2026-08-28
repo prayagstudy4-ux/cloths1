@@ -660,6 +660,8 @@ function RazorpaySection({ settings }: { settings: Record<string, string> }) {
   const [keyId, setKeyId] = useState(settings.razorpay_key_id ?? "")
   const [secret, setSecret] = useState(settings.razorpay_key_secret ?? "")
   const originalSecret = settings.razorpay_key_secret ?? ""
+  const [webhookSecret, setWebhookSecret] = useState(settings.razorpay_webhook_secret ?? "")
+  const originalWebhookSecret = settings.razorpay_webhook_secret ?? ""
   const canEdit = canDo("settings", "edit")
 
   async function save() {
@@ -672,6 +674,9 @@ function RazorpaySection({ settings }: { settings: Record<string, string> }) {
       // Only send the secret when the user actually changed it (server masks it)
       if (secret && secret !== originalSecret && !secret.includes("••")) {
         body.razorpay_key_secret = secret.trim()
+      }
+      if (webhookSecret && webhookSecret !== originalWebhookSecret && !webhookSecret.includes("••")) {
+        body.razorpay_webhook_secret = webhookSecret.trim()
       }
       await api.put("settings", body)
       toast({ title: "Razorpay settings saved" })
@@ -700,7 +705,13 @@ function RazorpaySection({ settings }: { settings: Record<string, string> }) {
           <Field label="Key secret" hint="Stored masked — type a new value only when changing it">
             <TextInput type="password" value={secret} onChange={setSecret} placeholder={originalSecret || "rzp_secret"} disabled={!canEdit} />
           </Field>
+          <Field label="Webhook secret" hint="Same secret you enter in Razorpay Dashboard → Settings → Webhooks">
+            <TextInput type="password" value={webhookSecret} onChange={setWebhookSecret} placeholder={originalWebhookSecret || "whsec_..."} disabled={!canEdit} />
+          </Field>
         </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          Webhook URL to configure in Razorpay Dashboard: <code className="rounded bg-muted px-1 py-0.5">https://YOUR-DOMAIN/api/razorpay-webhook</code> — enable the <b>payment.captured</b> event.
+        </p>
         <div className="mt-3 flex items-center justify-between">
           <p className="text-xs text-muted-foreground">
             Status: {enabled ? <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">Enabled</Badge> : <Badge variant="secondary">Disabled — manual verification</Badge>}

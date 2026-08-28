@@ -538,7 +538,8 @@ model QRPayment {
   customer     Customer? @relation(fields: [customerId], references: [id])
   status       String   @default("PENDING") // PENDING, VERIFIED, UNMATCHED, EXPIRED, CANCELLED
   transactionId String?
-  provider     String   @default("UPI_QR")
+  provider     String   @default("UPI_QR") // UPI_QR (manual verify) | RAZORPAY (auto verify)
+  razorpayQrId String? // Razorpay QR Codes API id (qr_...) when provider is RAZORPAY
   paymentId    String?
   verifiedAt   DateTime?
   verifiedBy   String?
