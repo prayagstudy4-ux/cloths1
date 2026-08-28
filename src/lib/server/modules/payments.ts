@@ -6,10 +6,16 @@ import QRCode from "qrcode"
 import { getRazorpayConfig, createRazorpayQr, listQrPayments } from "@/lib/server/razorpay"
 
 function buildUpiUrl(upiId: string, payee: string, amount: number, note: string) {
-  const params = new URLSearchParams({
-    pa: upiId, pn: payee, am: amount.toFixed(2), cu: "INR", tn: note,
-  })
-  return `upi://pay?${params.toString()}`
+  // Use encodeURIComponent (→ %20) rather than URLSearchParams (+ for spaces):
+  // strict UPI parsers (e.g. PhonePe) reject the "+" form, yielding "invalid QR".
+  const q = [
+    `pa=${encodeURIComponent(upiId)}`,
+    `pn=${encodeURIComponent(payee)}`,
+    `am=${amount.toFixed(2)}`,
+    `cu=INR`,
+    `tn=${encodeURIComponent(note)}`,
+  ].join("&")
+  return `upi://pay?${q}`
 }
 
 // PERF: throttle Razorpay reconciliation checks while the UI polls QR status
@@ -257,7 +263,7 @@ export async function handle(ctx: Ctx) {
       return json({ qr: { ...qr, provider: "RAZORPAY", upiUrl: rqr.upiUrl, qrImageUrl: rqr.imageUrl, qrDataUrl: null } })
     }
     const upiUrl = buildUpiUrl(upiId, business.upiPayeeName ?? business.name, amount, note)
-    const qrDataUrl = await QRCode.toDataURL(upiUrl, { width: 512, margin: 1 })
+    const qrDataUrl = await QRCode.toDataURL(upiUrl, { width: 512, margin: 4 })
     return json({ qr: { ...qr, upiUrl, qrDataUrl } })
   }
 
@@ -349,12 +355,18 @@ export async function handle(ctx: Ctx) {
   if (ctx.method === "GET" && action === "shop-qr") {
     const business = await db.businessProfile.findFirst()
     if (!business?.upiId) throw new AppError("UPI ID is not configured. Set it in Settings → Payments & QR.")
-    const upiUrl = buildUpiUrl(business.upiId, business.upiPayeeName ?? business.name, 0, `Payment to ${business.name}`)
-    // amount-less QR: remove am param
-    const params = new URLSearchParams({ pa: business.upiId, pn: business.upiPayeeName ?? business.name, cu: "INR", tn: `Payment to ${business.name}` })
-    const anyAmountUrl = `upi://pay?${params.toString()}`
-    const qrDataUrl = await QRCode.toDataURL(anyAmountUrl, { width: 512, margin: 1 })
-    return json({ upiUrl: anyAmountUrl, qrDataUrl, upiId: business.upiId, payee: business.upiPayeeName ?? business.name })
+    const payee = business.upiPayeeName ?? business.name
+    const note = `Payment to ${business.name}`
+    // amount-less QR: omit the am param (customer enters amount in their app)
+    const anyAmountUrl = [
+      `pa=${encodeURIComponent(business.upiId)}`,
+      `pn=${encodeURIComponent(payee)}`,
+      `cu=INR`,
+      `tn=${encodeURIComponent(note)}`,
+    ].join("&")
+    const upiUrl = `upi://pay?${anyAmountUrl}`
+    const qrDataUrl = await QRCode.toDataURL(upiUrl, { width: 512, margin: 4 })
+    return json({ upiUrl, qrDataUrl, upiId: business.upiId, payee })
   }
 
   return null
