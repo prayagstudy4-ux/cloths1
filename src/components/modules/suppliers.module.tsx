@@ -14,7 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
-  PackagePlus, Truck, IndianRupee, Package, Phone, Mail, MapPin, Pencil, Loader2,
+  PackagePlus, Truck, IndianRupee, Package, Phone, Mail, MapPin, Pencil, Loader2, Trash2,
 } from "lucide-react"
 import { fmtMoney, fmtDateIST } from "@/lib/format"
 import {
@@ -280,6 +280,7 @@ function DeleteConfirm({ supplier, onClose }: { supplier: Supplier; onClose: () 
 // ==================== DETAIL ====================
 function SupplierDetail({ id, onClose, onEdit }: { id: string; onClose: () => void; onEdit: (s: Supplier) => void }) {
   const { setActiveModule } = useApp()
+  const qc = useQueryClient()
   const { data, isLoading } = useQuery({
     queryKey: ["suppliers", id],
     queryFn: () => api.get(`suppliers/${id}`),
@@ -291,8 +292,25 @@ function SupplierDetail({ id, onClose, onEdit }: { id: string; onClose: () => vo
   const ledgerList: any[] = s?.ledger ?? []
 
   const canCreatePurchase = canDo("purchases", "create")
+  const [voidingPayment, setVoidingPayment] = useState<any | null>(null)
+  const canVoidPayment = canDo("payments", "void")
+
+  async function voidPayment() {
+    if (!voidingPayment) return
+    try {
+      await api.post(`payments/${voidingPayment.id}/void`, { reason: "Voided from supplier record" })
+      toast({ title: "Payment voided", description: `${voidingPayment.number} reversed.` })
+      qc.invalidateQueries({ queryKey: ["suppliers", id] })
+      qc.invalidateQueries({ queryKey: ["payments"] })
+    } catch (e: any) {
+      toast({ title: "Could not void payment", description: e.message, variant: "destructive" })
+    } finally {
+      setVoidingPayment(null)
+    }
+  }
 
   return (
+    <>
     <Sheet open onOpenChange={(v) => !v && onClose()}>
       <SheetContent side="right" className="w-full overflow-y-auto p-0 sm:max-w-2xl thin-scrollbar">
         <SheetHeader className="border-b bg-muted/40 px-5 py-4">
@@ -420,6 +438,16 @@ function SupplierDetail({ id, onClose, onEdit }: { id: string; onClose: () => vo
                         </div>
                         <Money value={-p.amount} className="text-sm font-semibold" />
                         <StatusBadge label={PAYMENT_STATUS_LABELS[p.status] ?? p.status} className={PAYMENT_STATUS_COLORS[p.status]} />
+                        {canVoidPayment && p.status === "VERIFIED" && (
+                          <button
+                            type="button"
+                            aria-label={`Void payment ${p.number}`}
+                            onClick={() => setVoidingPayment(p)}
+                            className="inline-flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -452,6 +480,17 @@ function SupplierDetail({ id, onClose, onEdit }: { id: string; onClose: () => vo
         )}
       </SheetContent>
     </Sheet>
+
+    <ConfirmDialog
+      open={!!voidingPayment}
+      onOpenChange={(v) => !v && setVoidingPayment(null)}
+      title={`Void payment ${voidingPayment?.number ?? ""}?`}
+      description="The payment will be marked void. Allocations to purchases and the supplier ledger are reversed. This is recorded in the audit log."
+      confirmLabel="Void Payment"
+      destructive
+      onConfirm={voidPayment}
+    />
+    </>
   )
 }
 

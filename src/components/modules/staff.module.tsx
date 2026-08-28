@@ -398,6 +398,8 @@ function EmployeeDetailSheet({
   const qc = useQueryClient()
   const [payOpen, setPayOpen] = useState(false)
   const [deactivateOpen, setDeactivateOpen] = useState(false)
+  const [permDelOpen, setPermDelOpen] = useState(false)
+  const [deletingSalaryId, setDeletingSalaryId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
   // Canonical detail (contract: GET staff/:id, includes attendance 60 + salaryPayments 50).
@@ -466,6 +468,39 @@ function EmployeeDetailSheet({
     } finally {
       setBusy(false)
       setDeactivateOpen(false)
+    }
+  }
+
+  /** DELETE staff/:id/delete permanently removes an already-deactivated employee and reverses payouts. */
+  async function permDelete() {
+    setBusy(true)
+    try {
+      await api.del(`staff/${employeeId}/delete`)
+      toast({
+        title: "Employee deleted",
+        description: `${employee?.name ?? ""} and their payout history were permanently removed.`,
+      })
+      qc.invalidateQueries({ queryKey: ["staff"] })
+      onClose()
+    } catch (e: any) {
+      toast({ title: "Could not delete employee", description: e.message, variant: "destructive" })
+    } finally {
+      setBusy(false)
+      setPermDelOpen(false)
+    }
+  }
+
+  /** DELETE staff/payments/:id removes a single salary/advance payout and reverses its payment + expense. */
+  async function deleteSalaryPayment(spId: string) {
+    setDeletingSalaryId(spId)
+    try {
+      await api.del(`staff/payments/${spId}`)
+      toast({ title: "Payment removed", description: "The payout and its accounting entry were reversed." })
+      qc.invalidateQueries({ queryKey: ["staff"] })
+    } catch (e: any) {
+      toast({ title: "Could not remove payment", description: e.message, variant: "destructive" })
+    } finally {
+      setDeletingSalaryId(null)
     }
   }
 
@@ -558,6 +593,11 @@ function EmployeeDetailSheet({
                     {busy ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <UserCheck className="mr-1.5 h-4 w-4" />} Reactivate
                   </Button>
                 )}
+              {employee.status === "INACTIVE" && canDo("staff", "delete") && (
+                <Button size="sm" variant="outline" className="text-destructive hover:text-destructive" onClick={() => setPermDelOpen(true)}>
+                  <Trash2 className="mr-1.5 h-4 w-4" /> Delete Permanently
+                </Button>
+              )}
           </div>
 
           {/* Info */}
@@ -637,6 +677,7 @@ function EmployeeDetailSheet({
                         <th className="px-3 py-2 font-semibold">Method</th>
                         <th className="px-3 py-2 text-right font-semibold">Amount</th>
                         <th className="px-3 py-2 font-semibold">Notes</th>
+                        {canDo("staff", "delete") && <th className="px-3 py-2" />}
                       </tr>
                     </thead>
                     <tbody>
@@ -650,6 +691,19 @@ function EmployeeDetailSheet({
                           <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">{PAYMENT_METHOD_LABELS[p.method] ?? p.method}</td>
                           <td className="px-3 py-2 text-right"><Money value={p.amount} colored className="font-semibold" /></td>
                           <td className="max-w-[160px] truncate px-3 py-2 text-xs text-muted-foreground" title={p.notes ?? ""}>{p.notes ?? "—"}</td>
+                          {canDo("staff", "delete") && (
+                            <td className="px-3 py-2 text-right">
+                              <button
+                                type="button"
+                                aria-label={`Delete payment ${p.id}`}
+                                disabled={deletingSalaryId === p.id}
+                                onClick={() => deleteSalaryPayment(p.id)}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-50 dark:hover:bg-red-950"
+                              >
+                                {deletingSalaryId === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                              </button>
+                            </td>
+                          )}
                         </tr>
                       ))}
                     </tbody>
@@ -672,6 +726,17 @@ function EmployeeDetailSheet({
         destructive
         loading={busy}
         onConfirm={deactivate}
+      />
+
+      <ConfirmDialog
+        open={permDelOpen}
+        onOpenChange={setPermDelOpen}
+        title={`Permanently delete ${employee.name}?`}
+        description="This removes the employee and reverses every salary / advance payout, including the linked payment and expense records. This cannot be undone and is recorded in the audit log."
+        confirmLabel="Delete Permanently"
+        destructive
+        loading={busy}
+        onConfirm={permDelete}
       />
     </Sheet>
   )

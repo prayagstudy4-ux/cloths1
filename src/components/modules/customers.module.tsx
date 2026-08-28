@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query"
 import { api, qs } from "@/lib/client/api"
-import { useApp } from "@/lib/client/store"
+import { useApp, canDo } from "@/lib/client/store"
 import { PageHeader, StatCard, EmptyState } from "@/components/shared/basics"
 import { DataTable, exportCSV, Column } from "@/components/shared/DataTable"
 import { StatusBadge, Money, DateCell, ConfirmDialog, Field, TextInput, SelectInput, TextArea, NumberInput } from "@/components/shared/fields"
@@ -199,12 +199,29 @@ function CustomerDetail({ id, onClose, onEdit }: { id: string; onClose: () => vo
     queryFn: () => api.get(`customers/${id}`),
   })
   const c = data?.customer
+  const [voidingPayment, setVoidingPayment] = useState<any | null>(null)
+  const canVoidPayment = canDo("payments", "void")
+
+  async function voidPayment() {
+    if (!voidingPayment) return
+    try {
+      await api.post(`payments/${voidingPayment.id}/void`, { reason: "Voided from customer record" })
+      toast({ title: "Payment voided", description: `${voidingPayment.number} reversed.` })
+      qc.invalidateQueries({ queryKey: ["customers", id] })
+      qc.invalidateQueries({ queryKey: ["payments"] })
+    } catch (e: any) {
+      toast({ title: "Could not void payment", description: e.message, variant: "destructive" })
+    } finally {
+      setVoidingPayment(null)
+    }
+  }
 
   async function remind() {
     toast({ title: "Reminder noted", description: `Payment reminder for ${c?.name} — ₹${(c?.outstanding ?? 0).toFixed(2)} due` })
   }
 
   return (
+    <>
     <Sheet open onOpenChange={(v) => !v && onClose()}>
       <SheetContent side="right" className="w-full overflow-y-auto p-0 sm:max-w-2xl thin-scrollbar">
         <SheetHeader className="border-b bg-muted/40 px-5 py-4">
@@ -320,6 +337,16 @@ function CustomerDetail({ id, onClose, onEdit }: { id: string; onClose: () => vo
                         </div>
                         <Money value={p.amount} colored={p.direction === "IN"} className="text-sm font-semibold" />
                         <StatusBadge label={p.status} className={p.status === "VERIFIED" ? "bg-emerald-100 text-emerald-800" : "bg-zinc-100 text-zinc-600"} />
+                        {canVoidPayment && p.status === "VERIFIED" && (
+                          <button
+                            type="button"
+                            aria-label={`Void payment ${p.number}`}
+                            onClick={() => setVoidingPayment(p)}
+                            className="inline-flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -346,6 +373,17 @@ function CustomerDetail({ id, onClose, onEdit }: { id: string; onClose: () => vo
         )}
       </SheetContent>
     </Sheet>
+
+    <ConfirmDialog
+      open={!!voidingPayment}
+      onOpenChange={(v) => !v && setVoidingPayment(null)}
+      title={`Void payment ${voidingPayment?.number ?? ""}?`}
+      description="The payment will be marked void. Allocations to invoices and the customer ledger are reversed. This is recorded in the audit log."
+      confirmLabel="Void Payment"
+      destructive
+      onConfirm={voidPayment}
+    />
+    </>
   )
 }
 

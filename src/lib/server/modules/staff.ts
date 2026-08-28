@@ -84,6 +84,29 @@ export async function handle(ctx: Ctx) {
     return json({ employee })
   }
 
+  if (ctx.method === "DELETE" && id && ctx.segs[2] === "delete") {
+    ctx.requirePerm("staff", "delete")
+    const employee = await db.employee.findUnique({ where: { id }, include: { salaryPayments: true } })
+    if (!employee) throw new AppError("Employee not found", 404)
+    if (employee.status === "ACTIVE") {
+      throw new AppError("Deactivate the employee first. Permanent deletion is only allowed for already-deactivated records.", 400)
+    }
+    await db.$transaction(async (tx) => {
+      // Reverse every salary/advance payout: drop the linked money-out payment and its expense,
+      // then remove the salary payment rows. Attendance cascades with the employee.
+      for (const sp of employee.salaryPayments) {
+        if (sp.paymentId) {
+          await tx.expense.deleteMany({ where: { paymentId: sp.paymentId } })
+          await tx.payment.deleteMany({ where: { id: sp.paymentId } })
+        }
+      }
+      await tx.salaryPayment.deleteMany({ where: { employeeId: id } })
+      await tx.employee.delete({ where: { id } })
+      await audit(tx, ctx.user, "staff", "DELETE", id, { action: "permanent", name: employee.name, code: employee.code })
+    }, { timeout: 60000, maxWait: 20000 })
+    return json({ ok: true })
+  }
+
   if (ctx.method === "DELETE" && id && !action) {
     ctx.requirePerm("staff", "delete")
     await db.employee.update({ where: { id }, data: { status: "INACTIVE" } })
@@ -180,6 +203,22 @@ export async function handle(ctx: Ctx) {
       return sp
     }, { timeout: 60000, maxWait: 20000 })
     return json({ payment: result })
+  }
+
+  // ---------- DELETE SALARY / ADVANCE PAYMENT ----------
+  if (ctx.method === "DELETE" && action === "payments" && id) {
+    ctx.requirePerm("staff", "delete")
+    const sp = await db.salaryPayment.findUnique({ where: { id } })
+    if (!sp) throw new AppError("Salary payment not found", 404)
+    await db.$transaction(async (tx) => {
+      if (sp.paymentId) {
+        await tx.expense.deleteMany({ where: { paymentId: sp.paymentId } })
+        await tx.payment.deleteMany({ where: { id: sp.paymentId } })
+      }
+      await tx.salaryPayment.delete({ where: { id } })
+      await audit(tx, ctx.user, "staff", "DELETE", id, { sub: "salary_payment", employeeId: sp.employeeId, type: sp.type, amount: sp.amount })
+    }, { timeout: 60000, maxWait: 20000 })
+    return json({ ok: true })
   }
 
   return null

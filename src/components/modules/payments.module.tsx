@@ -15,7 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   CreditCard, IndianRupee, ArrowDownRight, ArrowUpRight, QrCode, Wallet, Banknote, Landmark,
-  CheckCircle2, Printer, Ban, Loader2, Search, RotateCcw, ShieldAlert, UserCheck, FileSpreadsheet,
+  CheckCircle2, Printer, Ban, Loader2, Search, RotateCcw, ShieldAlert, UserCheck, FileSpreadsheet, Trash2,
 } from "lucide-react"
 import { fmtMoney, fmtDateIST, fmtDateTimeIST, ymdIST, monthStartIST, istDateFromYMD } from "@/lib/format"
 import {
@@ -58,6 +58,7 @@ interface QrPaymentRow {
   note: string | null
   upiId: string
   status: string
+  provider: string | null
   transactionId: string | null
   createdAt: string
   verifiedAt: string | null
@@ -405,7 +406,10 @@ function PaymentDetailSheet({ payment, onClose, onReceiveMore }: { payment: Paym
   const [voiding, setVoiding] = useState(false)
   const [reason, setReason] = useState("")
   const [loading, setLoading] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [delLoading, setDelLoading] = useState(false)
   const canVoid = canDo("payments", "void")
+  const canDelete = canDo("payments", "delete")
 
   async function doVoid() {
     if (!reason.trim()) return toast({ title: "Enter a reason", description: "Why is this payment being voided?", variant: "destructive" })
@@ -419,6 +423,19 @@ function PaymentDetailSheet({ payment, onClose, onReceiveMore }: { payment: Paym
     } catch (e: any) {
       toast({ title: "Could not void payment", description: e.message, variant: "destructive" })
     } finally { setLoading(false) }
+  }
+
+  async function doDelete() {
+    setDelLoading(true)
+    try {
+      await api.del(`payments/${payment.id}`)
+      toast({ title: "Payment deleted", description: `${payment.number} removed.` })
+      invalidatePaymentData(qc)
+      setDeleting(false)
+      onClose()
+    } catch (e: any) {
+      toast({ title: "Could not delete payment", description: e.message, variant: "destructive" })
+    } finally { setDelLoading(false) }
   }
 
   const info: { label: string; value: React.ReactNode }[] = [
@@ -504,6 +521,11 @@ function PaymentDetailSheet({ payment, onClose, onReceiveMore }: { payment: Paym
                 <Ban className="mr-1.5 h-4 w-4" /> Void Payment
               </Button>
             )}
+            {canDelete && payment.status === "UNMATCHED" && (
+              <Button variant="outline" size="sm" className="text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-950" onClick={() => setDeleting(true)}>
+                <Trash2 className="mr-1.5 h-4 w-4" /> Delete
+              </Button>
+            )}
             {payment.customerId && (
               <Button variant="outline" size="sm" onClick={() => setActiveModule("customers", { entityId: payment.customerId! })}>
                 View Customer
@@ -525,6 +547,27 @@ function PaymentDetailSheet({ payment, onClose, onReceiveMore }: { payment: Paym
           )}
         </div>
       </SheetContent>
+
+      {/* Delete confirm dialog (unmatched payments only) */}
+      {deleting && (
+        <Dialog open onOpenChange={(v) => !v && setDeleting(false)}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Delete payment {payment.number}?</DialogTitle>
+              <DialogDescription>
+                This unmatched payment has no allocations or ledger impact, so it can be removed entirely.
+                This is recorded in the audit log.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDeleting(false)} disabled={delLoading}>Cancel</Button>
+              <Button variant="destructive" onClick={doDelete} disabled={delLoading}>
+                {delLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Delete
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
 
       {/* Void confirm dialog with reason */}
       {voiding && (
@@ -1106,7 +1149,7 @@ function ShopQRSection() {
               <Printer className="mr-2 h-4 w-4" /> Print QR
             </Button>
             <p className="max-w-xs text-xs text-muted-foreground print:hidden">
-              Money received on this QR should be recorded under “Record UPI Payment” and then reconciled.
+              Money received on this QR should be recorded under "Record UPI Payment" and then reconciled.
             </p>
           </div>
         )}

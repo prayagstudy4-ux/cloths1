@@ -197,6 +197,22 @@ export async function handle(ctx: Ctx) {
     return json({ ok: true })
   }
 
+  // ---------- DELETE PAYMENT (unmatched only) ----------
+  if (ctx.method === "DELETE" && action && !id) {
+    ctx.requirePerm("payments", "delete")
+    const paymentId = action
+    await db.$transaction(async (tx) => {
+      const p = await tx.payment.findUnique({ where: { id: paymentId } })
+      if (!p) throw new AppError("Payment not found", 404)
+      if (p.status !== "UNMATCHED") {
+        throw new AppError("Only unmatched payments can be deleted. Void verified or allocated payments instead — this preserves the ledger.", 400)
+      }
+      await tx.payment.delete({ where: { id: paymentId } })
+      await audit(tx, ctx.user, "payments", "DELETE", paymentId, { number: p.number, amount: p.amount })
+    }, { timeout: 60000, maxWait: 20000 })
+    return json({ ok: true })
+  }
+
   // ============================================================
   // QR PAYMENTS
   // ============================================================
