@@ -21,7 +21,7 @@ import { toast } from "@/hooks/use-toast"
 import { fmtTimeIST } from "@/lib/format"
 
 export function TitleBar({ onExit }: { onExit: () => void }) {
-  const { user, business, setCommandOpen, setNotificationsOpen } = useApp()
+  const { user, business, setNotificationsOpen } = useApp()
   const { theme, setTheme } = useTheme()
   const [showExit, setShowExit] = useState(false)
   const [now, setNow] = useState(new Date())
@@ -59,14 +59,14 @@ export function TitleBar({ onExit }: { onExit: () => void }) {
 
         {/* Search — compact icon button on mobile, full bar on desktop */}
         <button
-          onClick={() => setCommandOpen(true)}
+          onClick={() => useApp.getState().setCommandOpen(true)}
           className="flex h-11 w-11 items-center justify-center rounded-md hover:bg-zinc-800 md:hidden"
           title="Search"
         >
           <Search className="h-5 w-5" />
         </button>
         <button
-          onClick={() => setCommandOpen(true)}
+          onClick={() => useApp.getState().setCommandOpen(true)}
           className="mx-auto hidden h-7 w-full max-w-md items-center gap-2 rounded-md border border-zinc-700 bg-zinc-800 px-3 text-left text-xs text-zinc-400 hover:border-zinc-500 hover:bg-zinc-750 md:flex"
         >
           <Search className="h-3.5 w-3.5" />

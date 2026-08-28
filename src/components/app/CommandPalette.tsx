@@ -26,7 +26,7 @@ const QUICK_ACTIONS = [
 ]
 
 export function CommandPalette() {
-  const { commandOpen, setCommandOpen, setActiveModule } = useApp()
+  const { commandOpen, setActiveModule } = useApp()
   const [q, setQ] = useState("")
   const [debounced, setDebounced] = useState("")
   const inputRef = useRef<HTMLInputElement>(null)
@@ -55,11 +55,11 @@ export function CommandPalette() {
 
   function go(module: string, params?: any) {
     setActiveModule(module, params)
-    setCommandOpen(false)
+    useApp.getState().setCommandOpen(false)
   }
 
   return (
-    <Dialog open={commandOpen} onOpenChange={(v) => { if (!v) setQ(""); setCommandOpen(v) }}>
+    <Dialog open={commandOpen} onOpenChange={(v) => { if (!v) setQ(""); useApp.getState().setCommandOpen(v) }}>
       <DialogContent className="top-[15%] max-w-xl translate-y-0 gap-0 p-0" aria-describedby={undefined}>
         <DialogTitle className="sr-only">Global Search</DialogTitle>
         <div className="flex items-center gap-2 border-b px-4 py-3">
@@ -71,7 +71,7 @@ export function CommandPalette() {
             placeholder="Search customers, products, invoices, payments… or type an action"
             className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
             onKeyDown={(e) => {
-              if (e.key === "Escape") setCommandOpen(false)
+              if (e.key === "Escape") useApp.getState().setCommandOpen(false)
               if (e.key === "Enter" && quickMatches[0]) go(quickMatches[0].module, quickMatches[0].params)
             }}
           />

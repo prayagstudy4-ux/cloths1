@@ -80,7 +80,7 @@ export function AppShell() {
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [setCommandOpen, toggleSidebar, notificationsOpen, setNotificationsOpen])
+  }, [toggleSidebar, notificationsOpen, setNotificationsOpen])
 
   // Auto-backup check on boot
   useEffect(() => {
