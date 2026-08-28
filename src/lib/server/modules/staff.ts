@@ -5,7 +5,10 @@ import { createPayment, SessionInfo } from "@/lib/server/services/core"
 import { ymdIST } from "@/lib/format"
 
 export async function handle(ctx: Ctx) {
-  const [, action, id] = ctx.segs
+  const raw1 = ctx.segs[1]
+  const SUB_ACTIONS = new Set(["attendance", "payments"])
+  const action = raw1 && SUB_ACTIONS.has(raw1) ? raw1 : undefined
+  const id = raw1 && !SUB_ACTIONS.has(raw1) ? raw1 : ctx.segs[2]
 
   // ---------- EMPLOYEES ----------
   if (ctx.method === "GET" && (!action || action === "index")) {
